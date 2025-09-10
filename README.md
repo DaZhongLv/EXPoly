@@ -91,7 +91,7 @@ runs/expoly-<timestamp>/
 
 ---
 
-5) CLI flags & defaults
+## 5) CLI flags & defaults
 expoly run --dream3d <file>
            --hx a:b --hy c:d --hz e:f
            [--lattice {FCC,BCC,DIA}]   # default: FCC
