@@ -478,3 +478,155 @@ class Frame:
         New_outer_margin = Outer_voxel.merge(New_Extend, on=['HZ', 'HY', 'HX', 'margin-ID'], how='left').dropna()
         out_df = pd.concat([Grain_inner, New_outer_margin], ignore_index=True)
         return out_df.round().astype(int)
+
+
+
+@dataclass
+class VoxelCSVFrame(Frame):
+    """
+    Frame 实现的一个变体：
+    - 体素网格 (GrainId, Dimension) 来自 voxel-CSV（空格分隔 header）
+    - grain 取向来自 Dream3D/HDF5，通过内部的 Frame(search_avg_Euler)
+
+    用法示例
+    --------
+    f = VoxelCSVFrame(
+        path="/path/to/t0_Meshed_MoreFeature.dream3d",   # h5 / dream3d
+        voxel_csv="/path/to/large_voxel_from_mesh.csv",  # 新的 voxel grid CSV
+        h5_grain_dset="GrainID",                         # h5 里面的 grain-ID dset 名
+    )
+    """
+
+    voxel_csv: str | Path = None
+    x_col: str = "voxel-X"
+    y_col: str = "voxel-Y"
+    z_col: str = "voxel-Z"
+    grain_col: str = "grain-ID"
+
+    h5_grain_dset: str = "GrainID"
+
+    # 记录 H 坐标归一化用到的原点和步长（可选，万一以后要用）
+    H_origin: np.ndarray | None = None   # [x0, y0, z0]
+    H_step: np.ndarray | None = None     # [dx, dy, dz]
+
+    _h5_frame: Frame | None = None
+    _grain_euler_map: Dict[int, np.ndarray] | None = None
+
+    def __post_init__(self):
+        dream_path = Path(self.path)
+        csv_path = Path(self.voxel_csv) if self.voxel_csv is not None else None
+
+        if not dream_path.exists():
+            raise FileNotFoundError(dream_path)
+        if csv_path is None or not csv_path.exists():
+            raise FileNotFoundError(f"voxel_csv not found: {csv_path}")
+
+        # ---------- 1. 用 h5 构造 orientation helper Frame ----------
+        base_mapping = self.mapping or {
+            "GrainId": self.h5_grain_dset,
+            "Euler": "EulerAngles",
+            "Num_NN": "NumNeighbors",
+            "Num_list": "NeighborList",
+            "Dimension": "DIMENSIONS",
+        }
+        prefer = self.prefer_groups or ["CellData", "CellFeatureData", "_SIMPL_GEOMETRY"]
+
+        h5_frame = Frame(
+            dream_path,
+            prefer_groups=prefer,
+            mapping=base_mapping,
+        )
+        self._h5_frame = h5_frame
+
+        self.Num_NN = h5_frame.Num_NN
+        self.Num_list = h5_frame.Num_list
+
+        grain_euler_map: Dict[int, np.ndarray] = {}
+        uniq_ids = np.unique(h5_frame.fid)
+        for gid in uniq_ids:
+            gid = int(gid)
+            if gid <= 0:
+                continue
+            try:
+                grain_euler_map[gid] = h5_frame.search_avg_Euler(gid)
+            except ValueError:
+                grain_euler_map[gid] = np.array([np.nan, np.nan, np.nan], dtype=float)
+        self._grain_euler_map = grain_euler_map
+
+        # ---------- 2. 读 voxel-CSV，并把坐标归一化成连续索引 ----------
+        df = pd.read_csv(
+            csv_path,
+            delim_whitespace=True,     # 关键：空格 / 任意空白符分隔
+            comment="#",
+            engine="python",
+        )
+
+        required_cols = [self.grain_col, self.x_col, self.y_col, self.z_col]
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise KeyError(f"voxel CSV missing columns: {missing}")
+
+        grain_id = df[self.grain_col].astype(int).to_numpy()
+
+        def _normalize_axis(vals: np.ndarray):
+            vals = vals.astype(float)
+            uniq = np.unique(vals)
+            uniq = uniq[~np.isnan(uniq)]
+            if uniq.size == 0:
+                raise ValueError("Axis has no valid values")
+            base = float(uniq.min())
+            if uniq.size == 1:
+                step = 1.0
+            else:
+                diffs = np.diff(np.sort(uniq))
+                diffs = diffs[diffs > 1e-8]
+                step = float(diffs.min()) if diffs.size > 0 else 1.0
+            idx = np.rint((vals - base) / step).astype(int)
+            return idx, base, step
+
+        gx_raw = df[self.x_col].to_numpy()
+        gy_raw = df[self.y_col].to_numpy()
+        gz_raw = df[self.z_col].to_numpy()
+
+        hx, x0, dx = _normalize_axis(gx_raw)
+        hy, y0, dy = _normalize_axis(gy_raw)
+        hz, z0, dz = _normalize_axis(gz_raw)
+
+        self.H_origin = np.array([x0, y0, z0], dtype=float)
+        self.H_step = np.array([dx, dy, dz], dtype=float)
+
+        hx_lim = int(hx.max()) + 1
+        hy_lim = int(hy.max()) + 1
+        hz_lim = int(hz.max()) + 1
+        self.Dimension = np.array([hx_lim, hy_lim, hz_lim], dtype=int)
+
+        grid = np.zeros((hz_lim, hy_lim, hx_lim), dtype=int)
+        grid[hz, hy, hx] = grain_id
+        self.GrainId = grid
+
+        # ---------- 3. 展开 Euler 网格 ----------
+        euler_grid = np.zeros((hz_lim, hy_lim, hx_lim, 3), dtype=float)
+        for gid, eul in grain_euler_map.items():
+            mask = (grid == gid)
+            if not np.any(mask):
+                continue
+            euler_grid[mask] = eul
+        self.Euler = euler_grid
+
+        # ---------- 4. 衍生字段：fid / eul / feature_index_map ----------
+        self.fid = self.GrainId.flatten()
+        self.eul = self.Euler.reshape(-1, 3)
+
+        uniq_ids_grid = np.unique(self.fid)
+        self._feature_index_map = {int(fid): i for i, fid in enumerate(uniq_ids_grid)}
+
+    def search_avg_Euler(self, grain_ID: int) -> np.ndarray:
+        gid = int(grain_ID)
+        if self._grain_euler_map is None:
+            raise RuntimeError("grain→Euler map not initialized.")
+        try:
+            return self._grain_euler_map[gid]
+        except KeyError as e:
+            raise ValueError(f"grain_id={gid} not found in HDF5 orientation map.") from e
+
+

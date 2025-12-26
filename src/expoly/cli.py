@@ -12,7 +12,7 @@ from typing import Iterable, List, Tuple
 import numpy as np
 import pandas as pd
 
-from expoly.frames import Frame
+from expoly.frames import Frame, VoxelCSVFrame
 from expoly.carve import CarveConfig, process, process_extend
 from expoly.polish import PolishConfig, polish_pipeline
 
@@ -58,16 +58,57 @@ def _pick_grain_ids(f: Frame, hx: Tuple[int, int], hy: Tuple[int, int], hz: Tupl
         raise RuntimeError("No positive grain id found within the provided H ranges.")
     return np.unique(gids)
 
+
+# --------------------------- frame builder ---------------------------
+
+def _build_frame_for_carve(
+    dream3d_path: Path | str,
+    voxel_csv: Path | None,
+    h5_grain_dset: str | None,
+) -> Frame:
+    """
+    根据是否提供 voxel_csv 来返回 Frame 或 VoxelCSVFrame。
+    h5_grain_dset 用来覆盖 HDF5 中 grain-ID 数据集名（默认 FeatureIds）。
+    """
+    dream3d_path = Path(dream3d_path)
+
+    grain_dset = h5_grain_dset or "FeatureIds"
+
+    if voxel_csv is None:
+        # 纯 Dream3D 路径（旧逻辑），但允许自定义 grain dset 名
+        mapping = {
+            "GrainId": grain_dset,
+            "Euler": "EulerAngles",
+            "Num_NN": "NumNeighbors",
+            "Num_list": "NeighborList",
+            "Dimension": "DIMENSIONS",
+        }
+        return Frame(str(dream3d_path), mapping=mapping)
+    else:
+        # 新逻辑：voxel-CSV + h5 组合
+        return VoxelCSVFrame(
+            path=str(dream3d_path),
+            voxel_csv=str(voxel_csv),
+            h5_grain_dset=grain_dset,
+        )
+
+
+
 # --------------------------- carve runner ---------------------------
 
 def _carve_one(args) -> pd.DataFrame:
     """
     子进程调用器：根据 extend 选择流程；失败则抛出异常（主进程会记录）。
     """
-    grain_id, dream3d_path, hx, hy, hz, lattice, ratio, extend, unit_extend_ratio, seed = args
+    (grain_id, dream3d_path, hx, hy, hz, lattice, ratio, extend, unit_extend_ratio, seed, voxel_csv,
+     h5_grain_dset) = args
 
     # 每个子进程自己打开 Frame（避免跨进程句柄问题）
-    frame = Frame(dream3d_path)
+    frame = _build_frame_for_carve(
+        dream3d_path,
+        voxel_csv=Path(voxel_csv) if voxel_csv is not None else None,
+        h5_grain_dset=h5_grain_dset,
+    )
 
     ccfg = CarveConfig(
         lattice=lattice,
@@ -92,12 +133,32 @@ def _carve_all(
     lattice: str, ratio: float,
     extend: bool, unit_extend_ratio: int,
     workers: int, seed: int | None,
+    voxel_csv: Path | None,
+    h5_grain_dset: str | None,
 ) -> pd.DataFrame:
-    frame = Frame(str(dream3d))
+    frame = _build_frame_for_carve(
+        dream3d,
+        voxel_csv=voxel_csv,
+        h5_grain_dset=h5_grain_dset,
+    )
     gids = _pick_grain_ids(frame, hx, hy, hz)
     LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", len(gids), hx, hy, hz)
 
-    tasks = [(int(g), str(dream3d), hx, hy, hz, lattice, ratio, extend, unit_extend_ratio, seed) for g in gids]
+    voxel_csv_str = str(voxel_csv) if voxel_csv is not None else None
+    tasks = [
+        (
+            int(g),
+            str(dream3d),
+            hx, hy, hz,
+            lattice, ratio,
+            extend, unit_extend_ratio,
+            seed,
+            voxel_csv_str,
+            h5_grain_dset,
+        )
+        for g in gids
+    ]
+
 
     if workers <= 1:
         chunks: List[pd.DataFrame] = []
@@ -121,6 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("run", help="Run carve + polish")
     r.add_argument("--dream3d", type=Path, required=True, help="Path to Dream3D file")
+    r.add_argument("--voxel-csv",type=Path,default=None,help="Optional voxel grid CSV (whitespace-separated). "
+             "If provided, use VoxelCSVFrame (CSV grid + HDF5 orientations).",)
+    r.add_argument("--h5-grain-dset",type=str,default=None,help="Name of grain-ID dataset in HDF5 (default: FeatureIds). "
+             "Example: GrainID.",
+    )
     r.add_argument("--hx", type=_parse_range, required=True, help="HX range, e.g. 0:50")
     r.add_argument("--hy", type=_parse_range, required=True, help="HY range, e.g. 0:50")
     r.add_argument("--hz", type=_parse_range, required=True, help="HZ range, e.g. 0:50")
@@ -145,6 +211,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--keep-tmp", action="store_true", help="Keep temporary files (tmp_in / ovito_psc / mask)")
     r.add_argument("--outdir", type=Path, default=None, help="Root output dir (default: runs/expoly-<ts>)")
 
+    r.add_argument("--final-with-grain", action="store_true",
+        help="Append per-atom grain-ID as an extra column in final.data (Atoms lines). "
+             "Note: may not be strictly compatible with LAMMPS atom_style atomic."
+    )
+
     r.add_argument("-v", "--verbose", action="store_true", help="Verbose logs")
     return p
 
@@ -161,7 +232,10 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
         lattice=ns.lattice, ratio=ns.ratio,
         extend=ns.extend, unit_extend_ratio=ns.unit_extend_ratio,
         workers=int(ns.workers), seed=ns.seed,
+        voxel_csv=ns.voxel_csv,
+        h5_grain_dset=ns.h5_grain_dset,
     )
+
     raw_csv = run_dir / "raw_points.csv"
     df_all.to_csv(raw_csv, header=False, index=False)
     LOG.info("[done] raw points → %s (rows=%d)", raw_csv, len(df_all))
@@ -191,7 +265,13 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
         "final_lmp":  run_dir / "final.data",
     }
 
-    final_path = polish_pipeline(raw_csv, pcfg, paths)
+    final_path = polish_pipeline(
+        raw_csv,
+        pcfg,
+        paths,
+        final_with_grain=bool(ns.final_with_grain),
+    )
+
     LOG.info("All done. final → %s", final_path)
     return 0
 
@@ -207,3 +287,5 @@ def main(argv: Iterable[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
