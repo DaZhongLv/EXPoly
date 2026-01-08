@@ -213,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     r.add_argument("--final-with-grain", action="store_true",
         help="Append per-atom grain-ID as an extra column in final.data (Atoms lines). "
-             "Note: may not be strictly compatible with LAMMPS atom_style atomic."
+         "Note: may not be strictly compatible with LAMMPS atom_style atomic."
     )
 
     r.add_argument("-v", "--verbose", action="store_true", help="Verbose logs")

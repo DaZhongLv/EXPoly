@@ -580,7 +580,7 @@ def polish_pipeline(
         ovito_psc,
         final_out,
         atom_mass=cfg.atom_mass,
-        grain_ids=grain_ids_final,
+        grain_ids=None,
     )
     logger.info("polish: final atoms=%d, box=%s", atom_num1, np.round(box1, 6))
 
