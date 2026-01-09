@@ -18,7 +18,6 @@ from expoly.polish import PolishConfig, polish_pipeline
 
 LOG = logging.getLogger("expoly.cli")
 
-
 # --------------------------- small helpers ---------------------------
 
 def _parse_range(s: str) -> Tuple[int, int]:
@@ -42,7 +41,7 @@ def _init_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
-        format="%(levelname)s | %(name)s: %(message)s"
+        format="%(levelname)s | %(name)s: %(message)s",
     )
 
 # --------------------------- grain selection ---------------------------
@@ -58,7 +57,6 @@ def _pick_grain_ids(f: Frame, hx: Tuple[int, int], hy: Tuple[int, int], hz: Tupl
         raise RuntimeError("No positive grain id found within the provided H ranges.")
     return np.unique(gids)
 
-
 # --------------------------- frame builder ---------------------------
 
 def _build_frame_for_carve(
@@ -71,7 +69,6 @@ def _build_frame_for_carve(
     h5_grain_dset 用来覆盖 HDF5 中 grain-ID 数据集名（默认 FeatureIds）。
     """
     dream3d_path = Path(dream3d_path)
-
     grain_dset = h5_grain_dset or "FeatureIds"
 
     if voxel_csv is None:
@@ -85,47 +82,63 @@ def _build_frame_for_carve(
         }
         return Frame(str(dream3d_path), mapping=mapping)
     else:
-        # 新逻辑：voxel-CSV + h5 组合
+        # voxel-CSV + h5 组合
         return VoxelCSVFrame(
             path=str(dream3d_path),
             voxel_csv=str(voxel_csv),
             h5_grain_dset=grain_dset,
         )
 
+# --------------------------- carve runner (FAST) ---------------------------
 
+# 多进程 worker 内部缓存（每个 worker 只初始化一次 Frame / Config）
+_W_FRAME: Frame | None = None
+_W_CCFG: CarveConfig | None = None
+_W_EXTEND: bool = False
 
-# --------------------------- carve runner ---------------------------
-
-def _carve_one(args) -> pd.DataFrame:
+def _worker_init(
+    dream3d_path: str,
+    voxel_csv: str | None,
+    h5_grain_dset: str | None,
+    lattice: str,
+    ratio: float,
+    unit_extend_ratio: int,
+    seed: int | None,
+    extend: bool,
+) -> None:
     """
-    子进程调用器：根据 extend 选择流程；失败则抛出异常（主进程会记录）。
+    Pool initializer：每个 worker 只跑一次，构建 Frame + CarveConfig。
     """
-    (grain_id, dream3d_path, hx, hy, hz, lattice, ratio, extend, unit_extend_ratio, seed, voxel_csv,
-     h5_grain_dset) = args
+    global _W_FRAME, _W_CCFG, _W_EXTEND
+    _W_EXTEND = bool(extend)
 
-    # 每个子进程自己打开 Frame（避免跨进程句柄问题）
-    frame = _build_frame_for_carve(
+    _W_FRAME = _build_frame_for_carve(
         dream3d_path,
         voxel_csv=Path(voxel_csv) if voxel_csv is not None else None,
         h5_grain_dset=h5_grain_dset,
     )
 
-    ccfg = CarveConfig(
+    _W_CCFG = CarveConfig(
         lattice=lattice,
         ratio=float(ratio),
         unit_extend_ratio=int(unit_extend_ratio),
         rng_seed=None if seed is None else int(seed),
     )
 
-    if extend:
-        df = process_extend(grain_id, frame, ccfg)
-    else:
-        df = process(grain_id, frame, ccfg)
+def _carve_one_gid(grain_id: int) -> pd.DataFrame:
+    """
+    worker 任务：只接收 grain_id，其它都来自 worker 全局缓存。
+    """
+    if _W_FRAME is None or _W_CCFG is None:
+        raise RuntimeError("Worker not initialized: _W_FRAME/_W_CCFG is None")
 
-    # 要求列顺序：X,Y,Z,HX,HY,HZ,margin-ID,grain-ID
-    cols = ['X','Y','Z','HX','HY','HZ','margin-ID','grain-ID']
-    df = df[cols].copy()
-    return df
+    if _W_EXTEND:
+        df = process_extend(int(grain_id), _W_FRAME, _W_CCFG)
+    else:
+        df = process(int(grain_id), _W_FRAME, _W_CCFG)
+
+    cols = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
+    return df[cols].copy()
 
 def _carve_all(
     dream3d: Path,
@@ -136,41 +149,59 @@ def _carve_all(
     voxel_csv: Path | None,
     h5_grain_dset: str | None,
 ) -> pd.DataFrame:
-    frame = _build_frame_for_carve(
-        dream3d,
-        voxel_csv=voxel_csv,
-        h5_grain_dset=h5_grain_dset,
-    )
-    gids = _pick_grain_ids(frame, hx, hy, hz)
+    """
+    carve 全部 grains：
+      - 主进程：只打开一次 Frame，用来挑 gids
+      - 单核：只复用同一个 Frame，不再每个 grain 重新打开
+      - 多核：每个 worker initializer 只打开一次 Frame，不再每个 grain 打开
+    """
+    # 主进程 Frame：只用于挑 grain ids
+    frame0 = _build_frame_for_carve(dream3d, voxel_csv=voxel_csv, h5_grain_dset=h5_grain_dset)
+    gids = _pick_grain_ids(frame0, hx, hy, hz)
     LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", len(gids), hx, hy, hz)
 
+    # 单核路径：复用同一个 frame + cfg
+    if workers <= 1:
+        ccfg = CarveConfig(
+            lattice=lattice,
+            ratio=float(ratio),
+            unit_extend_ratio=int(unit_extend_ratio),
+            rng_seed=None if seed is None else int(seed),
+        )
+        chunks: List[pd.DataFrame] = []
+        for g in gids:
+            if extend:
+                df = process_extend(int(g), frame0, ccfg)
+            else:
+                df = process(int(g), frame0, ccfg)
+            cols = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
+            chunks.append(df[cols].copy())
+        df_all = pd.concat(chunks, ignore_index=True)
+        LOG.info("[done] merged %d grains → %d rows", len(gids), len(df_all))
+        return df_all
+
+    # 多核路径：每 worker 只初始化一次 frame/cfg
+    import multiprocessing as mp
+    ctx = mp.get_context("spawn")  # Mac/Win 友好；HPC/Linux 也可用
+
     voxel_csv_str = str(voxel_csv) if voxel_csv is not None else None
-    tasks = [
-        (
-            int(g),
+    with ctx.Pool(
+        processes=int(workers),
+        initializer=_worker_init,
+        initargs=(
             str(dream3d),
-            hx, hy, hz,
-            lattice, ratio,
-            extend, unit_extend_ratio,
-            seed,
             voxel_csv_str,
             h5_grain_dset,
-        )
-        for g in gids
-    ]
+            lattice,
+            float(ratio),
+            int(unit_extend_ratio),
+            seed,
+            bool(extend),
+        ),
+    ) as pool:
+        chunks = pool.map(_carve_one_gid, [int(g) for g in gids])
 
-
-    if workers <= 1:
-        chunks: List[pd.DataFrame] = []
-        for t in tasks:
-            chunks.append(_carve_one(t))
-        df_all = pd.concat(chunks, ignore_index=True)
-    else:
-        import multiprocessing as mp
-        with mp.get_context("spawn").Pool(processes=workers) as pool:
-            chunks = pool.map(_carve_one, tasks)
-        df_all = pd.concat(chunks, ignore_index=True)
-
+    df_all = pd.concat(chunks, ignore_index=True)
     LOG.info("[done] merged %d grains → %d rows", len(gids), len(df_all))
     return df_all
 
@@ -181,28 +212,43 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     r = sub.add_parser("run", help="Run carve + polish")
+
     r.add_argument("--dream3d", type=Path, required=True, help="Path to Dream3D file")
-    r.add_argument("--voxel-csv",type=Path,default=None,help="Optional voxel grid CSV (whitespace-separated). "
-             "If provided, use VoxelCSVFrame (CSV grid + HDF5 orientations).",)
-    r.add_argument("--h5-grain-dset",type=str,default=None,help="Name of grain-ID dataset in HDF5 (default: FeatureIds). "
-             "Example: GrainID.",
+
+    r.add_argument(
+        "--voxel-csv",
+        type=Path,
+        default=None,
+        help="Optional voxel grid CSV (whitespace-separated). If provided, use VoxelCSVFrame (CSV grid + HDF5 orientations).",
     )
+    r.add_argument(
+        "--h5-grain-dset",
+        type=str,
+        default=None,
+        help="Name of grain-ID dataset in HDF5 (default: FeatureIds). Example: GrainID.",
+    )
+
     r.add_argument("--hx", type=_parse_range, required=True, help="HX range, e.g. 0:50")
     r.add_argument("--hy", type=_parse_range, required=True, help="HY range, e.g. 0:50")
     r.add_argument("--hz", type=_parse_range, required=True, help="HZ range, e.g. 0:50")
 
-    r.add_argument("--lattice", choices=["FCC","BCC","DIA"], default="FCC", help="Lattice type")
+    r.add_argument("--lattice", choices=["FCC", "BCC", "DIA"], default="FCC", help="Lattice type")
     r.add_argument("--ratio", type=float, default=1.5, help="Cube ratio used during carving (a in H units)")
     r.add_argument("--lattice-constant", type=float, required=True, help="Physical lattice constant (Å)")
 
-    r.add_argument("--workers", type=int, default=os.cpu_count() or 1, help="Parallel workers for carving")
+    r.add_argument("--workers", type=int, default=(os.cpu_count() or 1), help="Parallel workers for carving")
     r.add_argument("--seed", type=int, default=None, help="Random seed for carving order / ball center")
 
-    # <<< 新增：extend 相关开关 >>>
+    # extend 开关
     r.add_argument("--extend", action="store_true", help="Use extended-neighborhood pipeline for carving")
-    r.add_argument("--unit-extend-ratio", type=int, default=3, help="Unit extend ratio (recommend odd numbers: 3,5,7...)")
+    r.add_argument(
+        "--unit-extend-ratio",
+        type=int,
+        default=3,
+        help="Unit extend ratio (recommend odd numbers: 3,5,7...)",
+    )
 
-    # <<< 新增：polish 端范围同步放大 >>>
+    # polish 端范围同步放大（legacy 逻辑）
     r.add_argument("--real-extent", action="store_true", help="Multiply HX/HY/HZ ranges by unit-extend-ratio in polish")
 
     # OVITO / 输出
@@ -211,9 +257,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--keep-tmp", action="store_true", help="Keep temporary files (tmp_in / ovito_psc / mask)")
     r.add_argument("--outdir", type=Path, default=None, help="Root output dir (default: runs/expoly-<ts>)")
 
-    r.add_argument("--final-with-grain", action="store_true",
-        help="Append per-atom grain-ID as an extra column in final.data (Atoms lines). "
-         "Note: may not be strictly compatible with LAMMPS atom_style atomic."
+    r.add_argument(
+        "--final-with-grain",
+        action="store_true",
+        help="If enabled, the polish pipeline will ALSO output a final.dump that carries grain-ID. "
+             "(final.data stays LAMMPS-atomic compatible.)",
     )
 
     r.add_argument("-v", "--verbose", action="store_true", help="Verbose logs")
@@ -243,8 +291,10 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
     # 2) polish（强制 OVITO）
     #    scan_ratio = lattice_constant / cube_ratio；此处 cube_ratio 就是 --ratio
     scan_ratio = float(ns.lattice_constant) / float(ns.ratio)
-    LOG.info("[polish] lattice_constant=%.6g, cube_ratio=%.6g → scan_ratio=%.6g",
-             ns.lattice_constant, ns.ratio, scan_ratio)
+    LOG.info(
+        "[polish] lattice_constant=%.6g, cube_ratio=%.6g → scan_ratio=%.6g",
+        ns.lattice_constant, ns.ratio, scan_ratio
+    )
 
     pcfg = PolishConfig(
         scan_ratio=scan_ratio,
@@ -282,10 +332,9 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     if ns.command == "run":
         return run_noninteractive(ns)
+
     parser.print_help()
     return 2
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
