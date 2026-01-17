@@ -19,7 +19,6 @@ def run(
     seed: Optional[int] = None,
     extend: bool = False,
     unit_extend_ratio: int = 3,
-    real_extent: bool = False,
     ovito_cutoff: float = 1.6,
     atom_mass: float = 58.6934,
     keep_tmp: bool = False,
@@ -27,6 +26,10 @@ def run(
     outdir: Optional[str | Path] = None,
     voxel_csv: Optional[str | Path] = None,
     h5_grain_dset: Optional[str] = None,
+    h5_euler_dset: Optional[str] = None,
+    h5_numneighbors_dset: Optional[str] = None,
+    h5_neighborlist_dset: Optional[str] = None,
+    h5_dimensions_dset: Optional[str] = None,
     verbose: bool = False,
 ) -> Path:
     """
@@ -51,11 +54,10 @@ def run(
     seed : int, optional
         Random seed for reproducible carving
     extend : bool, default=False
-        Use extended-neighborhood pipeline
+        Use extended-neighborhood pipeline. When enabled, automatically
+        multiplies H ranges by unit-extend-ratio in polish step.
     unit_extend_ratio : int, default=3
         Unit extend ratio (recommend odd numbers)
-    real_extent : bool, default=False
-        Multiply H ranges by unit-extend-ratio in polish
     ovito_cutoff : float, default=1.6
         OVITO overlap cutoff distance in Å
     atom_mass : float, default=58.6934
@@ -70,6 +72,14 @@ def run(
         Optional voxel grid CSV
     h5_grain_dset : str, optional
         Custom grain-ID dataset name (default: FeatureIds)
+    h5_euler_dset : str, optional
+        Custom Euler angles dataset name (default: EulerAngles)
+    h5_numneighbors_dset : str, optional
+        Custom NumNeighbors dataset name (default: NumNeighbors)
+    h5_neighborlist_dset : str, optional
+        Custom NeighborList dataset name (default: NeighborList)
+    h5_dimensions_dset : str, optional
+        Custom DIMENSIONS dataset name (default: DIMENSIONS)
     verbose : bool, default=False
         Enable verbose logging
     
@@ -99,6 +109,10 @@ def run(
         dream3d=Path(dream3d),
         voxel_csv=Path(voxel_csv) if voxel_csv else None,
         h5_grain_dset=h5_grain_dset,
+        h5_euler_dset=h5_euler_dset,
+        h5_numneighbors_dset=h5_numneighbors_dset,
+        h5_neighborlist_dset=h5_neighborlist_dset,
+        h5_dimensions_dset=h5_dimensions_dset,
         hx=hx,
         hy=hy,
         hz=hz,
@@ -109,7 +123,7 @@ def run(
         seed=seed,
         extend=extend,
         unit_extend_ratio=unit_extend_ratio,
-        real_extent=real_extent,
+        real_extent=extend,  # Auto-enable real_extent when extend is used
         ovito_cutoff=ovito_cutoff,
         atom_mass=atom_mass,
         keep_tmp=keep_tmp,

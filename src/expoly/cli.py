@@ -23,7 +23,7 @@ LOG = logging.getLogger("expoly.cli")
 
 def _parse_range(s: str) -> Tuple[int, int]:
     """
-    Parse 'a:b' (也容忍 '[a:b]'、空格等) → (a, b)，均为 int。
+    Parse 'a:b' (also tolerates '[a:b]', spaces, etc.) → (a, b), both int.
     """
     s = s.strip().lstrip("[").rstrip("]").strip()
     if ":" not in s:
@@ -42,14 +42,26 @@ def _init_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
-        format="%(levelname)s | %(name)s: %(message)s"
+        format="%(levelname)s | %(name)s: %(message)s",
+        force=True,  # Override any existing configuration
     )
+    # Ensure output is flushed immediately (important for SLURM/supercomputers)
+    # This ensures progress messages appear in SLURM output files in real-time
+    import sys
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(line_buffering=True)
+        except (AttributeError, ValueError):
+            pass  # Fallback if reconfigure not available
+    # Ensure output is flushed immediately (important for SLURM/supercomputers)
+    import sys
+    sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
 
 # --------------------------- grain selection ---------------------------
 
 def _pick_grain_ids(f: Frame, hx: Tuple[int, int], hy: Tuple[int, int], hz: Tuple[int, int]) -> np.ndarray:
     """
-    用 Dream3D 的体素范围挑 grain（>0）。
+    Select grains (>0) within Dream3D voxel ranges.
     """
     gids = f.find_volume_grain_ID(hx, hy, hz, return_count=False)
     gids = np.asarray(gids, dtype=int)
@@ -70,10 +82,14 @@ def _build_frame_for_carve(
     dream3d_path: Path | str,
     voxel_csv: Path | None,
     h5_grain_dset: str | None,
+    h5_euler_dset: str | None = None,
+    h5_numneighbors_dset: str | None = None,
+    h5_neighborlist_dset: str | None = None,
+    h5_dimensions_dset: str | None = None,
 ) -> Frame:
     """
-    根据是否提供 voxel_csv 来返回 Frame 或 VoxelCSVFrame。
-    h5_grain_dset 用来覆盖 HDF5 中 grain-ID 数据集名（默认 FeatureIds）。
+    Build Frame or VoxelCSVFrame based on whether voxel_csv is provided.
+    All h5_*_dset parameters allow customizing HDF5 dataset names.
     """
     dream3d_path = Path(dream3d_path)
     
@@ -83,18 +99,27 @@ def _build_frame_for_carve(
             f"Please check the file path and ensure the file exists."
         )
 
-    grain_dset = h5_grain_dset or "FeatureIds"
+    # Build mapping with custom dataset names or defaults
+    mapping = {
+        "GrainId": h5_grain_dset or "FeatureIds",
+        "Euler": h5_euler_dset or "EulerAngles",
+        "Num_NN": h5_numneighbors_dset or "NumNeighbors",
+        "Num_list": h5_neighborlist_dset or "NeighborList",
+        "Dimension": h5_dimensions_dset or "DIMENSIONS",
+    }
+
+    # Map attribute names to CLI argument names for error messages
+    attr_to_arg = {
+        "GrainId": "--h5-grain-dset",
+        "Euler": "--h5-euler-dset",
+        "Num_NN": "--h5-numneighbors-dset",
+        "Num_list": "--h5-neighborlist-dset",
+        "Dimension": "--h5-dimensions-dset",
+    }
 
     try:
         if voxel_csv is None:
-            # 纯 Dream3D 路径（旧逻辑），但允许自定义 grain dset 名
-            mapping = {
-                "GrainId": grain_dset,
-                "Euler": "EulerAngles",
-                "Num_NN": "NumNeighbors",
-                "Num_list": "NeighborList",
-                "Dimension": "DIMENSIONS",
-            }
+            # Pure Dream3D path with customizable dataset names
             return Frame(str(dream3d_path), mapping=mapping)
         else:
             if not Path(voxel_csv).exists():
@@ -102,18 +127,29 @@ def _build_frame_for_carve(
                     f"Voxel CSV file not found: {voxel_csv}. "
                     f"Please check the file path."
                 )
-            # 新逻辑：voxel-CSV + h5 组合
+            # Voxel-CSV + HDF5 combination
             return VoxelCSVFrame(
                 path=str(dream3d_path),
                 voxel_csv=str(voxel_csv),
-                h5_grain_dset=grain_dset,
+                h5_grain_dset=mapping["GrainId"],
             )
     except KeyError as e:
         dataset_name = str(e).strip("'\"")
+        # Find which attribute/dataset failed by checking the error message
+        # KeyError from find_dataset_keys contains the dataset name
+        failed_attr = None
+        for attr, ds_name in mapping.items():
+            if ds_name == dataset_name:
+                failed_attr = attr
+                break
+        
+        # Get the appropriate CLI argument name
+        arg_name = attr_to_arg.get(failed_attr, "--h5-*-dset") if failed_attr else "--h5-*-dset"
+        
         raise RuntimeError(
             f"Missing dataset '{dataset_name}' in HDF5 file '{dream3d_path}'. "
             f"Expected path: DataContainers/*/CellData/{dataset_name} or similar. "
-            f"If your dataset has a different name, use --h5-grain-dset to specify it. "
+            f"If your dataset has a different name, use {arg_name} to specify it. "
             f"Use 'h5dump -n {dream3d_path}' to inspect the HDF5 structure."
         ) from e
     except Exception as e:
@@ -128,16 +164,20 @@ def _build_frame_for_carve(
 
 def _carve_one(args) -> pd.DataFrame:
     """
-    子进程调用器：根据 extend 选择流程；失败则抛出异常（主进程会记录）。
+    Subprocess worker: select process based on extend flag; raises exception on failure (main process logs).
     """
     (grain_id, dream3d_path, hx, hy, hz, lattice, ratio, extend, unit_extend_ratio, seed, voxel_csv,
-     h5_grain_dset) = args
+     h5_grain_dset, h5_euler_dset, h5_numneighbors_dset, h5_neighborlist_dset, h5_dimensions_dset) = args
 
-    # 每个子进程自己打开 Frame（避免跨进程句柄问题）
+    # Each subprocess opens its own Frame (avoid cross-process handle issues)
     frame = _build_frame_for_carve(
         dream3d_path,
         voxel_csv=Path(voxel_csv) if voxel_csv is not None else None,
         h5_grain_dset=h5_grain_dset,
+        h5_euler_dset=h5_euler_dset,
+        h5_numneighbors_dset=h5_numneighbors_dset,
+        h5_neighborlist_dset=h5_neighborlist_dset,
+        h5_dimensions_dset=h5_dimensions_dset,
     )
 
     ccfg = CarveConfig(
@@ -152,7 +192,7 @@ def _carve_one(args) -> pd.DataFrame:
     else:
         df = process(grain_id, frame, ccfg)
 
-    # 要求列顺序：X,Y,Z,HX,HY,HZ,margin-ID,grain-ID
+    # Required column order: X,Y,Z,HX,HY,HZ,margin-ID,grain-ID
     cols = ['X','Y','Z','HX','HY','HZ','margin-ID','grain-ID']
     df = df[cols].copy()
     return df
@@ -165,14 +205,23 @@ def _carve_all(
     workers: int, seed: int | None,
     voxel_csv: Path | None,
     h5_grain_dset: str | None,
+    h5_euler_dset: str | None = None,
+    h5_numneighbors_dset: str | None = None,
+    h5_neighborlist_dset: str | None = None,
+    h5_dimensions_dset: str | None = None,
 ) -> pd.DataFrame:
     frame = _build_frame_for_carve(
         dream3d,
         voxel_csv=voxel_csv,
         h5_grain_dset=h5_grain_dset,
+        h5_euler_dset=h5_euler_dset,
+        h5_numneighbors_dset=h5_numneighbors_dset,
+        h5_neighborlist_dset=h5_neighborlist_dset,
+        h5_dimensions_dset=h5_dimensions_dset,
     )
     gids = _pick_grain_ids(frame, hx, hy, hz)
-    LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", len(gids), hx, hy, hz)
+    total_grains = len(gids)
+    LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", total_grains, hx, hy, hz)
 
     voxel_csv_str = str(voxel_csv) if voxel_csv is not None else None
     tasks = [
@@ -185,20 +234,44 @@ def _carve_all(
             seed,
             voxel_csv_str,
             h5_grain_dset,
+            h5_euler_dset,
+            h5_numneighbors_dset,
+            h5_neighborlist_dset,
+            h5_dimensions_dset,
         )
         for g in gids
     ]
 
-
+    # Process grains with progress display
+    import sys
     if workers <= 1:
         chunks: List[pd.DataFrame] = []
-        for t in tasks:
+        LOG.info("[carve] Processing %d grains sequentially...", total_grains)
+        sys.stdout.flush()  # Ensure output appears in SLURM logs immediately
+        for i, t in enumerate(tasks, 1):
+            grain_id = t[0]
+            LOG.info("[carve] [%d/%d] Processing grain ID: %d", i, total_grains, grain_id)
+            sys.stdout.flush()
             chunks.append(_carve_one(t))
+            LOG.info("[carve] [%d/%d] ✓ Completed grain ID: %d", i, total_grains, grain_id)
+            sys.stdout.flush()  # Flush after each grain for SLURM visibility
         df_all = pd.concat(chunks, ignore_index=True)
     else:
         import multiprocessing as mp
+        LOG.info("[carve] Processing %d grains with %d workers...", total_grains, workers)
+        sys.stdout.flush()
         with mp.get_context("spawn").Pool(processes=workers) as pool:
-            chunks = pool.map(_carve_one, tasks)
+            # Use imap for progress tracking
+            chunks = []
+            completed = 0
+            for result in pool.imap(_carve_one, tasks):
+                completed += 1
+                grain_id = tasks[completed - 1][0]
+                percentage = int(100 * completed / total_grains)
+                LOG.info("[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d", 
+                        completed, total_grains, percentage, grain_id)
+                sys.stdout.flush()  # Ensure progress appears in SLURM output files in real-time
+                chunks.append(result)
         df_all = pd.concat(chunks, ignore_index=True)
 
     LOG.info("[done] merged %d grains → %d rows", len(gids), len(df_all))
@@ -227,6 +300,15 @@ def build_parser() -> argparse.ArgumentParser:
     input_group.add_argument("--h5-grain-dset", type=str, default=None,
                             help="Name of grain-ID dataset in HDF5 (default: FeatureIds). "
                                  "Example: GrainID")
+    input_group.add_argument("--h5-euler-dset", type=str, default=None,
+                            help="Name of Euler angles dataset in HDF5 (default: EulerAngles)")
+    input_group.add_argument("--h5-numneighbors-dset", type=str, default=None,
+                            help="Name of NumNeighbors dataset in HDF5 (default: NumNeighbors)")
+    input_group.add_argument("--h5-neighborlist-dset", type=str, default=None,
+                            help="Name of NeighborList dataset in HDF5 (default: NeighborList). "
+                                 "Example: NeighborList2")
+    input_group.add_argument("--h5-dimensions-dset", type=str, default=None,
+                            help="Name of DIMENSIONS dataset in HDF5 (default: DIMENSIONS)")
     
     # Region selection group
     region_group = r.add_argument_group("Region Selection")
@@ -240,7 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Carving group
     carve_group = r.add_argument_group("Carving")
     carve_group.add_argument("--lattice", choices=["FCC", "BCC", "DIA"], default="FCC",
-                            help="Lattice type (default: FCC)")
+                            help="Lattice type: FCC (Face-Centered cubic), BCC (Body-Centered cubic), DIA (diamond) (default: FCC)")
     carve_group.add_argument("--ratio", type=float, default=1.5,
                             help="Lattice-to-voxel scale ratio (default: 1.5). "
                                  "Larger ratio → smaller grain size")
@@ -261,8 +343,6 @@ def build_parser() -> argparse.ArgumentParser:
                              help="OVITO overlap cutoff distance in Å (default: 1.6, safe for Ni FCC)")
     polish_group.add_argument("--atom-mass", type=float, default=58.6934,
                              help="Atom mass for LAMMPS 'Masses' section (default: 58.6934, Ni)")
-    polish_group.add_argument("--real-extent", action="store_true",
-                             help="Multiply HX/HY/HZ ranges by unit-extend-ratio in polish")
     
     # Output group
     output_group = r.add_argument_group("Output")
@@ -283,6 +363,14 @@ def build_parser() -> argparse.ArgumentParser:
                   help="Path to Dream3D HDF5 file to validate")
     d.add_argument("--h5-grain-dset", type=str, default=None,
                   help="Name of grain-ID dataset (default: FeatureIds)")
+    d.add_argument("--h5-euler-dset", type=str, default=None,
+                  help="Name of Euler angles dataset (default: EulerAngles)")
+    d.add_argument("--h5-numneighbors-dset", type=str, default=None,
+                  help="Name of NumNeighbors dataset (default: NumNeighbors)")
+    d.add_argument("--h5-neighborlist-dset", type=str, default=None,
+                  help="Name of NeighborList dataset (default: NeighborList)")
+    d.add_argument("--h5-dimensions-dset", type=str, default=None,
+                  help="Name of DIMENSIONS dataset (default: DIMENSIONS)")
     d.add_argument("--hx", type=_parse_range, default=None,
                   help="HX range to validate (optional, e.g. 0:50)")
     d.add_argument("--hy", type=_parse_range, default=None,
@@ -302,7 +390,7 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
     run_dir = _mk_run_dir(ns.outdir)
     (hx0, hx1), (hy0, hy1), (hz0, hz1) = ns.hx, ns.hy, ns.hz
 
-    # 1) carve（可扩展）
+    # 1) carve (extendable)
     df_all = _carve_all(
         dream3d=ns.dream3d,
         hx=(hx0, hx1), hy=(hy0, hy1), hz=(hz0, hz1),
@@ -311,14 +399,18 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
         workers=int(ns.workers), seed=ns.seed,
         voxel_csv=ns.voxel_csv,
         h5_grain_dset=ns.h5_grain_dset,
+        h5_euler_dset=getattr(ns, 'h5_euler_dset', None),
+        h5_numneighbors_dset=getattr(ns, 'h5_numneighbors_dset', None),
+        h5_neighborlist_dset=getattr(ns, 'h5_neighborlist_dset', None),
+        h5_dimensions_dset=getattr(ns, 'h5_dimensions_dset', None),
     )
 
     raw_csv = run_dir / "raw_points.csv"
-    df_all.to_csv(raw_csv, header=False, index=False)
+    df_all.to_csv(raw_csv, header=False, index=False, sep=" ")
     LOG.info("[done] raw points → %s (rows=%d)", raw_csv, len(df_all))
 
-    # 2) polish（强制 OVITO）
-    #    scan_ratio = lattice_constant / cube_ratio；此处 cube_ratio 就是 --ratio
+    # 2) polish (OVITO required)
+    #    scan_ratio = lattice_constant / cube_ratio; here cube_ratio is --ratio
     scan_ratio = float(ns.lattice_constant) / float(ns.ratio)
     LOG.info("[polish] lattice_constant=%.6g, cube_ratio=%.6g → scan_ratio=%.6g",
              ns.lattice_constant, ns.ratio, scan_ratio)
@@ -327,7 +419,7 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
         scan_ratio=scan_ratio,
         cube_ratio=float(ns.ratio),
         hx_range=(hx0, hx1), hy_range=(hy0, hy1), hz_range=(hz0, hz1),
-        real_extent=bool(ns.real_extent),
+        real_extent=bool(ns.extend),  # Auto-enable real_extent when extend is used
         unit_extend_ratio=int(ns.unit_extend_ratio),
         ovito_cutoff=float(ns.ovito_cutoff),
         atom_mass=float(ns.atom_mass),
@@ -371,15 +463,30 @@ def doctor_command(ns: argparse.Namespace) -> int:
     
     # Try to load Frame
     frame = None
+    # Build mapping with custom dataset names or defaults
+    grain_dset = ns.h5_grain_dset or "FeatureIds"
+    euler_dset = getattr(ns, 'h5_euler_dset', None) or "EulerAngles"
+    numneighbors_dset = getattr(ns, 'h5_numneighbors_dset', None) or "NumNeighbors"
+    neighborlist_dset = getattr(ns, 'h5_neighborlist_dset', None) or "NeighborList"
+    dimensions_dset = getattr(ns, 'h5_dimensions_dset', None) or "DIMENSIONS"
+    mapping = {
+        "GrainId": grain_dset,
+        "Euler": euler_dset,
+        "Num_NN": numneighbors_dset,
+        "Num_list": neighborlist_dset,
+        "Dimension": dimensions_dset,
+    }
+    # Map attribute names to CLI argument names for error messages
+    attr_to_arg = {
+        "GrainId": "--h5-grain-dset",
+        "Euler": "--h5-euler-dset",
+        "Num_NN": "--h5-numneighbors-dset",
+        "Num_list": "--h5-neighborlist-dset",
+        "Dimension": "--h5-dimensions-dset",
+    }
+    
+    # Build mapping with custom dataset names or defaults
     try:
-        grain_dset = ns.h5_grain_dset or "FeatureIds"
-        mapping = {
-            "GrainId": grain_dset,
-            "Euler": "EulerAngles",
-            "Num_NN": "NumNeighbors",
-            "Num_list": "NeighborList",
-            "Dimension": "DIMENSIONS",
-        }
         frame = Frame(str(dream3d_path), mapping=mapping)
         info.append(f"✓ Successfully loaded HDF5 file")
         info.append(f"  Volume dimensions: HX=[0,{frame.HX_lim}), HY=[0,{frame.HY_lim}), HZ=[0,{frame.HZ_lim})")
@@ -393,9 +500,16 @@ def doctor_command(ns: argparse.Namespace) -> int:
         
     except KeyError as e:
         dataset_name = str(e).strip("'\"")
+        # Find which attribute failed
+        failed_attr = None
+        for attr, ds_name in mapping.items():
+            if ds_name == dataset_name:
+                failed_attr = attr
+                break
+        arg_name = attr_to_arg.get(failed_attr, "--h5-*-dset") if failed_attr else "--h5-*-dset"
         issues.append(
             f"✗ Missing dataset '{dataset_name}' in HDF5 file.\n"
-            f"  Solution: Use --h5-grain-dset to specify a different dataset name, "
+            f"  Solution: Use {arg_name} to specify a different dataset name, "
             f"or check the HDF5 structure with 'h5dump -n {dream3d_path}'"
         )
     except Exception as e:

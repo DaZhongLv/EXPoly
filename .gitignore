@@ -31,3 +31,8 @@ runs/
 GITHUB*.md
 UPLOAD*.md
 README_GITHUB.md
+QUICK_TEST*.md
+QUICK_TEST*.sh
+REMOVE_DOCS*.md
+TEST_STATUS.md
+remove_internal_docs.sh

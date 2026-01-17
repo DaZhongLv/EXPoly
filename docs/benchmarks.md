@@ -18,12 +18,17 @@ Benchmarks are run using synthetic Dream3D HDF5 files of varying sizes. Each ben
 # Generate test data
 python benchmarks/generate_toy_data.py --sizes 20 50 100
 
-# Run benchmark on a file
+# Run benchmark on a file (using An0new6.dream3d as example)
 python benchmarks/benchmark.py \
-  --dream3d benchmarks/fixtures/benchmark_20x20x20.dream3d \
+  --dream3d An0new6.dream3d \
   --hx 0:20 --hy 0:20 --hz 0:20 \
   --lattice FCC --ratio 1.5 \
-  --lattice-constant 3.524
+  --lattice-constant 3.524 \
+  --h5-grain-dset FeatureIds \
+  --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors \
+  --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS
 ```
 
 ## Example Results
@@ -104,11 +109,16 @@ To benchmark your own data:
 
 ```bash
 python benchmarks/benchmark.py \
-  --dream3d your_data.dream3d \
+  --dream3d An0new6.dream3d \
   --hx 0:100 --hy 0:100 --hz 0:100 \
   --lattice FCC \
   --ratio 1.5 \
   --lattice-constant 3.524 \
+  --h5-grain-dset FeatureIds \
+  --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors \
+  --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS \
   --workers 4 \
   --output my_benchmark.csv
 ```

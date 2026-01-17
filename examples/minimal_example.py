@@ -53,6 +53,8 @@ def main():
     else:
         hx_range, hy_range, hz_range = "0:20", "0:20", "0:20"
     
+    # Build command with all HDF5 dataset names explicitly specified
+    # For An0new6.dream3d: NeighborList2 (not default NeighborList)
     cmd = [
         "expoly", "run",
         "--dream3d", str(dream3d_path.absolute()),
@@ -62,10 +64,34 @@ def main():
         "--lattice", "FCC",
         "--ratio", "1.5",
         "--lattice-constant", "3.524",  # Ni
+        "--h5-grain-dset", "FeatureIds",
+        "--h5-euler-dset", "EulerAngles",
+        "--h5-numneighbors-dset", "NumNeighbors",
+        "--h5-neighborlist-dset", "NeighborList2",  # An0new6.dream3d uses NeighborList2
+        "--h5-dimensions-dset", "DIMENSIONS",
         "--workers", "2",
         "--ovito-cutoff", "1.6",
         "--keep-tmp",  # Keep intermediate files for inspection
     ]
+    
+    # For toy data, use default dataset names (no --h5-*-dset needed)
+    if not real_data.exists():
+        # Remove h5 dataset arguments for toy data (uses defaults)
+        cmd = [arg for arg in cmd if not arg.startswith("--h5-")]
+        # Re-add only the essential arguments
+        cmd = [
+            "expoly", "run",
+            "--dream3d", str(dream3d_path.absolute()),
+            "--hx", hx_range,
+            "--hy", hy_range,
+            "--hz", hz_range,
+            "--lattice", "FCC",
+            "--ratio", "1.5",
+            "--lattice-constant", "3.524",
+            "--workers", "2",
+            "--ovito-cutoff", "1.6",
+            "--keep-tmp",
+        ]
     
     print(f"Running: {' '.join(cmd)}")
     print()

@@ -104,6 +104,8 @@ def test_lammps_file_structure(tmp_dir: Path):
     # Check header structure
     assert any("atoms" in line.lower() for line in lines)
     assert any("atom types" in line.lower() for line in lines)
-    assert any("xlo xhi" in " ".join(lines).lower() or "xlo" in " ".join(lines).lower())
+    # Check for box bounds (xlo xhi, ylo yhi, zlo zhi)
+    all_text = " ".join(lines).lower()
+    assert ("xlo xhi" in all_text or "xlo" in all_text)
     assert any("Masses" in line for line in lines)
     assert any("Atoms" in line for line in lines)

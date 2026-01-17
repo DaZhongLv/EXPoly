@@ -15,12 +15,17 @@ EXPoly reconstructs atomistic lattices from **Dream3D HDF5 voxel data**, merges 
 # Install
 pip install -e .
 
-# Run (using your Dream3D file)
+# Run (using An0new6.dream3d as example)
 expoly run \
-  --dream3d /path/to/your_data.dream3d \
+  --dream3d An0new6.dream3d \
   --hx 0:100 --hy 0:100 --hz 0:100 \
   --lattice FCC --ratio 1.5 \
-  --lattice-constant 3.524
+  --lattice-constant 3.524 \
+  --h5-grain-dset FeatureIds \
+  --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors \
+  --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS
 ```
 
 Output: `runs/expoly-<timestamp>/final.data` (ready for LAMMPS)
@@ -100,12 +105,28 @@ Core dependencies (installed automatically):
 
 This tool expects voxel-based experimental data from Dream3D. Minimum datasets:
 
-- **FeatureIds**: 3D/4D array (z,y,x,1) of positive grain IDs (0 = void/background)
-  - Path: `DataContainers/SyntheticVolumeDataContainer/CellData/FeatureIds`
-- **EulerAngles**: 3D array (z,y,x,3) of Euler angles (Bunge convention, radians)
-  - Path: `DataContainers/SyntheticVolumeDataContainer/CellData/EulerAngles`
-- **DIMENSIONS**: Volume dimensions [X, Y, Z]
-  - Path: `DataContainers/SyntheticVolumeDataContainer/_SIMPL_GEOMETRY/DIMENSIONS`
+- **FeatureIds** (or custom name): 3D/4D array (z,y,x,1) of positive grain IDs (0 = void/background)
+  - Default path: `DataContainers/*/CellData/FeatureIds`
+  - Example (An0new6.dream3d): `FeatureIds`
+  - Customize with `--h5-grain-dset`
+- **EulerAngles** (or custom name): 3D array (z,y,x,3) of Euler angles (Bunge convention, radians)
+  - Default path: `DataContainers/*/CellData/EulerAngles`
+  - Example (An0new6.dream3d): `EulerAngles`
+  - Customize with `--h5-euler-dset`
+- **NumNeighbors** (or custom name): Number of neighbors per grain
+  - Default path: `DataContainers/*/CellFeatureData/NumNeighbors`
+  - Example (An0new6.dream3d): `NumNeighbors`
+  - Customize with `--h5-numneighbors-dset`
+- **NeighborList** (or custom name): Neighbor list array
+  - Default path: `DataContainers/*/CellFeatureData/NeighborList`
+  - Example (An0new6.dream3d): `NeighborList2` (note: different from default!)
+  - Customize with `--h5-neighborlist-dset`
+- **DIMENSIONS** (or custom name): Volume dimensions [X, Y, Z]
+  - Default path: `DataContainers/*/_SIMPL_GEOMETRY/DIMENSIONS`
+  - Example (An0new6.dream3d): `DIMENSIONS`
+  - Customize with `--h5-dimensions-dset`
+
+**Note**: Dataset names may vary between Dream3D files. Use the `--h5-*-dset` flags to specify custom names. For example, with An0new6.dream3d, use `--h5-neighborlist-dset NeighborList2`.
 
 The pipeline computes per-grain average Euler angles to orient lattices.
 
@@ -117,10 +138,15 @@ The pipeline computes per-grain average Euler angles to orient lattices.
 
 ```bash
 expoly run \
-  --dream3d /path/to/file.dream3d \
+  --dream3d An0new6.dream3d \
   --hx 0:50 --hy 0:50 --hz 0:50 \
   --lattice FCC --ratio 1.5 \
-  --lattice-constant 3.524
+  --lattice-constant 3.524 \
+  --h5-grain-dset FeatureIds \
+  --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors \
+  --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS
 ```
 
 ### What This Does
@@ -148,7 +174,7 @@ expoly run \
 expoly run \
   --dream3d <file>              # Required: Path to Dream3D file
   --hx a:b --hy c:d --hz e:f    # Required: H-space crop ranges
-  [--lattice {FCC,BCC,DIA}]     # Default: FCC
+  [--lattice {FCC,BCC,DIA}]     # Default: FCC (FCC=Face-Centered cubic, BCC=Body-Centered cubic, DIA=diamond)
   [--ratio <float>]             # Default: 1.5
   [--lattice-constant <float>]  # Required: Physical lattice constant (Å)
   [--workers <int>]             # Default: auto (CPU cores)
@@ -160,11 +186,14 @@ expoly run \
 ```
 
 **Advanced options:**
-- `--extend`: Use extended-neighborhood pipeline for carving
+- `--extend`: Use extended-neighborhood pipeline for carving. When enabled, automatically multiplies HX/HY/HZ ranges by unit-extend-ratio in polish step.
 - `--unit-extend-ratio <int>`: Unit extend ratio (default: 3, recommend odd numbers)
-- `--real-extent`: Multiply HX/HY/HZ ranges by unit-extend-ratio in polish
 - `--voxel-csv <file>`: Optional voxel grid CSV (whitespace-separated)
 - `--h5-grain-dset <name>`: Custom grain-ID dataset name (default: FeatureIds)
+- `--h5-euler-dset <name>`: Custom Euler angles dataset name (default: EulerAngles)
+- `--h5-numneighbors-dset <name>`: Custom NumNeighbors dataset name (default: NumNeighbors)
+- `--h5-neighborlist-dset <name>`: Custom NeighborList dataset name (default: NeighborList). Example: NeighborList2
+- `--h5-dimensions-dset <name>`: Custom DIMENSIONS dataset name (default: DIMENSIONS)
 
 ### OVITO Cutoff Guidelines
 

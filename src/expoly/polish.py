@@ -83,7 +83,7 @@ def _load_raw_points(raw_csv: PathLike) -> pd.DataFrame:
       columns: X, Y, Z, HX, HY, HZ, margin-ID, grain-ID
     Force numeric & drop invalid rows to avoid dtype issues.
     """
-    df = pd.read_csv(raw_csv, header=None, low_memory=False)
+    df = pd.read_csv(raw_csv, header=None, sep=r"\s+", low_memory=False)
     df.columns = ['X', 'Y', 'Z', 'HX', 'HY', 'HZ', 'margin-ID', 'grain-ID']
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
