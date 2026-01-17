@@ -23,3 +23,11 @@ runs/
 *.lmp
 *.h5
 *.hdf5
+
+# Internal documentation (not for public repo)
+*SUMMARY.md
+*CHECKLIST.md
+*PLAN.md
+GITHUB*.md
+UPLOAD*.md
+README_GITHUB.md
