@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: Lyu
+    given-names: Meizhong
+title: "EXPoly: Voxel-to-Atomistic Conversion and LAMMPS Pipeline Tools"
+version: 1.0.0
+date-released: 2024-XX-XX
+doi: 10.XXXX/XXXXXX
+url: "https://github.com/DaZhongLv/EXPoly"
+repository-code: "https://github.com/DaZhongLv/EXPoly"
+license: MIT
+keywords:
+  - "molecular dynamics"
+  - "microstructure"
+  - "voxel data"
+  - "atomistic simulation"
+  - "LAMMPS"
+  - "Dream3D"
+abstract: "EXPoly converts experimental microstructure voxel data (Dream3D HDF5) into MD-ready atomistic structures (LAMMPS data files) by reconstructing oriented lattices for each grain and removing overlaps using OVITO."

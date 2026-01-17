@@ -5,16 +5,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "expoly"
-version = "0.2.0"
+version = "1.0.0"
 description = "Voxel-to-atomistic conversion and LAMMPS pipeline tools (with legacy runners)"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{name="Meizhong Lyu"}]
 license = {text = "MIT"}
-dependencies = ["numpy","pandas","scipy","jinja2","h5py", "scikit-learn", "ovito", "plotly"]
+dependencies = ["numpy","pandas","scipy","h5py", "ovito", "plotly"]
 
 [project.optional-dependencies]
-dev = ["pytest","ruff","mypy", "plotly", "matplotlib"]
+dev = ["pytest>=7.0","pytest-cov","ruff","mypy", "plotly", "matplotlib"]
 
 [project.scripts]
 expoly = "expoly.cli:main"
@@ -25,3 +25,28 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["expoly*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "W503",  # line break before binary operator
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
