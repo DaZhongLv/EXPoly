@@ -37,7 +37,6 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
-    "W503",  # line break before binary operator
 ]
 
 [tool.ruff.format]
@@ -50,3 +49,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
