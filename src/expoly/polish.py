@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence, Tuple, Union, List
+from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -202,8 +202,8 @@ def ovito_delete_overlap_data(in_lammps_path: PathLike,
       - out_psc_path: cleaned LAMMPS data file
     """
     try:
-        from ovito.io import import_file, export_file
         from ovito.data import CutoffNeighborFinder
+        from ovito.io import export_file, import_file
         from ovito.modifiers import DeleteSelectedModifier
     except Exception as e:
         raise RuntimeError(
@@ -290,7 +290,9 @@ def _parse_xyz_from_atoms_lines(atoms_lines: List[str]) -> np.ndarray:
         if len(parts) < 5:
             continue
         try:
-            x = float(parts[2]); y = float(parts[3]); z = float(parts[4])
+            x = float(parts[2])
+            y = float(parts[3])
+            z = float(parts[4])
             vals.append((x, y, z))
         except Exception:
             pass
@@ -388,8 +390,7 @@ def build_final_dump_with_grain(
     timestep: int = 0,
 ) -> Tuple[int, Tuple[float, float, float, float, float, float]]:
     """
-    从 OVITO 清理过的 LAMMPS data（ovito_psc）和 per-atom grain-ID，
-    写出一个 LAMMPS dump 文件：
+    Write a LAMMPS dump file from OVITO-cleaned LAMMPS data (ovito_psc) and per-atom grain-ID:
 
         ITEM: TIMESTEP
         <timestep>
@@ -402,13 +403,13 @@ def build_final_dump_with_grain(
         ITEM: ATOMS id type x y z grain-ID
         ...
 
-    - 会重新编号 id 为 1..N（和 build_final_data_from_ovito_atoms 一致）。
-    - type / x / y / z 来自 OVITO 输出的 Atoms 块。
+    - Renumbers IDs to 1..N (consistent with build_final_data_from_ovito_atoms).
+    - type / x / y / z come from OVITO's Atoms block output.
     """
     atoms_lines = _extract_atoms_lines_from_data(ovito_clean_path)
     atom_num = len(atoms_lines)
 
-    # --- 处理 grain_ids ---
+    # --- Process grain_ids ---
     grain_ids = np.asarray(list(grain_ids), dtype=int)
     if grain_ids.shape[0] != atom_num:
         raise RuntimeError(
@@ -416,7 +417,7 @@ def build_final_dump_with_grain(
             f"!= atom_num ({atom_num})"
         )
 
-    # --- 解析 type 和 xyz ---
+    # --- Parse type and xyz ---
     types = []
     xyz = []
     for ln in atoms_lines:
@@ -424,7 +425,9 @@ def build_final_dump_with_grain(
         if len(parts) < 5:
             continue
         t = int(parts[1])
-        x = float(parts[2]); y = float(parts[3]); z = float(parts[4])
+        x = float(parts[2])
+        y = float(parts[3])
+        z = float(parts[4])
         types.append(t)
         xyz.append((x, y, z))
 
@@ -453,7 +456,7 @@ def build_final_dump_with_grain(
         f.write(f"{zlo:.10g} {zhi:.10g}\n")
         f.write("ITEM: ATOMS id type x y z grain-ID\n")
 
-        # ---- data 行：重新编号 id = 1..N ----
+        # ---- Data rows: renumber id = 1..N ----
         new_id = 1
         for (t, (x, y, z), gid) in zip(types, xyz, grain_ids):
             f.write(
@@ -518,7 +521,7 @@ def polish_pipeline(
     tmp_in, ovito_mask, ovito_psc, final_out = _resolve_pipeline_paths(paths)
 
     # 1) Pre-OVITO data
-    #    同时写出 id 映射：id X Y Z margin-ID grain-ID
+    #    Also write id mapping: id X Y Z margin-ID grain-ID
     id_map_path = ovito_mask.with_suffix(".ids.txt")
     atom_num0, box0 = write_lammps_input_data(
         raw_csv,
@@ -537,18 +540,18 @@ def polish_pipeline(
         shuffle_seed=cfg.ovito_shuffle_seed,
     )
 
-    # 2.5) 如果需要，把 surviving atoms 对应的 grain-ID 算出来
+    # 2.5) If needed, compute grain-ID for surviving atoms
     grain_ids_final = None
     if final_with_grain:
         try:
-            # 读取 id map：id  X  Y  Z  margin-ID  grain-ID
+            # Read id map: id X Y Z margin-ID grain-ID
             id_df = pd.read_csv(
                 id_map_path,
                 sep=r"\s+",
                 header=None,
                 names=["id", "X", "Y", "Z", "margin-ID", "grain-ID"],
             )
-            # 读取 mask：0=keep, 1=delete
+            # Read mask: 0=keep, 1=delete
             mask_arr = np.loadtxt(ovito_mask, dtype=int, delimiter=",")
             if mask_arr.ndim != 1:
                 mask_arr = mask_arr.reshape(-1)
@@ -561,7 +564,7 @@ def polish_pipeline(
                 )
             else:
                 keep_idx = np.where(mask_arr == 0)[0]
-                # 假设 OVITO 删除后保持原始顺序，只是去掉了被选中的行：
+                # Assume OVITO maintains original order after deletion, just removes selected rows:
                 grain_ids_final = id_df.loc[keep_idx, "grain-ID"].to_numpy(dtype=int)
                 logger.info(
                     "polish: grain-ID propagated for %d surviving atoms.",
@@ -584,7 +587,7 @@ def polish_pipeline(
     )
     logger.info("polish: final atoms=%d, box=%s", atom_num1, np.round(box1, 6))
 
-    # 3.5) 如果需要 grain-ID，并且映射成功，再额外写一个 dump 格式
+    # 3.5) If grain-ID is needed and mapping succeeded, also write a dump format
     if final_with_grain and (grain_ids_final is not None):
         final_dump = final_out.with_suffix(".dump")
         try:
@@ -592,7 +595,7 @@ def polish_pipeline(
                 ovito_psc,
                 final_dump,
                 grain_ids_final,
-                timestep=cfg.current_frame,   # 比如用 current_frame 作为 timestep
+                timestep=cfg.current_frame,   # e.g., use current_frame as timestep
             )
             logger.info(
                 "polish: also wrote dump with grain-ID → %s (atoms=%d)",
@@ -601,7 +604,7 @@ def polish_pipeline(
         except Exception as e:
             logger.warning(
                 "polish: failed to write dump-with-grainID (%s); "
-                "final.data 已正常写出。", e
+                "final.data was written successfully.", e
             )
 
     # 4) Cleanup

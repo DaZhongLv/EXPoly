@@ -3,13 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import h5py as hdf
 import numpy as np
 import pandas as pd
-from . import general_func
-
 
 # ----------------- Common HDF5 helpers -----------------
 
@@ -484,16 +482,16 @@ class Frame:
 @dataclass
 class VoxelCSVFrame(Frame):
     """
-    Frame 实现的一个变体：
-    - 体素网格 (GrainId, Dimension) 来自 voxel-CSV（空格分隔 header）
-    - grain 取向来自 Dream3D/HDF5，通过内部的 Frame(search_avg_Euler)
+    A variant of Frame implementation:
+    - Voxel grid (GrainId, Dimension) comes from voxel-CSV (space-separated header)
+    - Grain orientation comes from Dream3D/HDF5, via internal Frame(search_avg_Euler)
 
-    用法示例
-    --------
+    Usage Example
+    -------------
     f = VoxelCSVFrame(
         path="/path/to/t0_Meshed_MoreFeature.dream3d",   # h5 / dream3d
-        voxel_csv="/path/to/large_voxel_from_mesh.csv",  # 新的 voxel grid CSV
-        h5_grain_dset="GrainID",                         # h5 里面的 grain-ID dset 名
+        voxel_csv="/path/to/large_voxel_from_mesh.csv",  # new voxel grid CSV
+        h5_grain_dset="GrainID",                         # grain-ID dataset name in h5
     )
     """
 
@@ -505,7 +503,7 @@ class VoxelCSVFrame(Frame):
 
     h5_grain_dset: str = "GrainID"
 
-    # 记录 H 坐标归一化用到的原点和步长（可选，万一以后要用）
+    # Record origin and step size used for H coordinate normalization (optional, for future use)
     H_origin: np.ndarray | None = None   # [x0, y0, z0]
     H_step: np.ndarray | None = None     # [dx, dy, dz]
 
@@ -521,7 +519,7 @@ class VoxelCSVFrame(Frame):
         if csv_path is None or not csv_path.exists():
             raise FileNotFoundError(f"voxel_csv not found: {csv_path}")
 
-        # ---------- 1. 用 h5 构造 orientation helper Frame ----------
+        # ---------- 1. Construct orientation helper Frame from h5 ----------
         base_mapping = self.mapping or {
             "GrainId": self.h5_grain_dset,
             "Euler": "EulerAngles",
@@ -553,10 +551,10 @@ class VoxelCSVFrame(Frame):
                 grain_euler_map[gid] = np.array([np.nan, np.nan, np.nan], dtype=float)
         self._grain_euler_map = grain_euler_map
 
-        # ---------- 2. 读 voxel-CSV，并把坐标归一化成连续索引 ----------
+        # ---------- 2. Read voxel-CSV and normalize coordinates to continuous indices ----------
         df = pd.read_csv(
             csv_path,
-            delim_whitespace=True,     # 关键：空格 / 任意空白符分隔
+            delim_whitespace=True,     # Key: space / any whitespace separator
             comment="#",
             engine="python",
         )
@@ -604,7 +602,7 @@ class VoxelCSVFrame(Frame):
         grid[hz, hy, hx] = grain_id
         self.GrainId = grid
 
-        # ---------- 3. 展开 Euler 网格 ----------
+        # ---------- 3. Expand Euler grid ----------
         euler_grid = np.zeros((hz_lim, hy_lim, hx_lim, 3), dtype=float)
         for gid, eul in grain_euler_map.items():
             mask = (grid == gid)
@@ -613,7 +611,7 @@ class VoxelCSVFrame(Frame):
             euler_grid[mask] = eul
         self.Euler = euler_grid
 
-        # ---------- 4. 衍生字段：fid / eul / feature_index_map ----------
+        # ---------- 4. Derived fields: fid / eul / feature_index_map ----------
         self.fid = self.GrainId.flatten()
         self.eul = self.Euler.reshape(-1, 3)
 

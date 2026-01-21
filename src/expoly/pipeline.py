@@ -34,9 +34,9 @@ def run(
 ) -> Path:
     """
     Run the EXPoly carve + polish pipeline programmatically.
-    
+
     This is a high-level API that wraps the CLI functionality.
-    
+
     Parameters
     ----------
     dream3d : str | Path
@@ -82,12 +82,12 @@ def run(
         Custom DIMENSIONS dataset name (default: DIMENSIONS)
     verbose : bool, default=False
         Enable verbose logging
-    
+
     Returns
     -------
     Path
         Path to the generated final.data file
-    
+
     Examples
     --------
     >>> from expoly import run
@@ -101,9 +101,10 @@ def run(
     >>> print(f"Output: {final_path}")
     """
     import os
-    from expoly.cli import run_noninteractive
     from argparse import Namespace
-    
+
+    from expoly.cli import run_noninteractive
+
     # Convert to Namespace for compatibility with run_noninteractive
     ns = Namespace(
         dream3d=Path(dream3d),
@@ -131,26 +132,25 @@ def run(
         final_with_grain=final_with_grain,
         verbose=verbose,
     )
-    
+
     # Run the pipeline
     result = run_noninteractive(ns)
     if result != 0:
         raise RuntimeError(f"Pipeline failed with exit code {result}")
-    
+
     # Find the output directory (created by run_noninteractive)
-    import time
     if outdir:
         base = Path(outdir)
     else:
         base = Path("runs")
-    
+
     # Find the most recent run directory
     run_dirs = sorted(base.glob("expoly-*"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not run_dirs:
         raise RuntimeError("Could not find output directory")
-    
+
     final_path = run_dirs[0] / "final.data"
     if not final_path.exists():
         raise RuntimeError(f"Output file not found: {final_path}")
-    
+
     return final_path

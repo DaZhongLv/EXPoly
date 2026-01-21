@@ -17,12 +17,11 @@ import argparse
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
-
 
 # ------------------------------ Logging ---------------------------------------
 
@@ -248,7 +247,7 @@ def _make_output_paths(dump_path: Path, out_dir: Optional[Path]) -> Tuple[Path, 
     d3d_dir.mkdir(parents=True, exist_ok=True)
 
     base = dump_path.name
-    stem, ext = Path(base).stem, Path(base).suffix
+    stem, _ext = Path(base).stem, Path(base).suffix
     if stem.startswith("dump"):
         char_name = base.replace("dump", "Characterize", 1)
         id_name = base.replace("dump", "Original_ID", 1)

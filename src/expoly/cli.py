@@ -12,8 +12,8 @@ from typing import Iterable, List, Tuple
 import numpy as np
 import pandas as pd
 
-from expoly.frames import Frame, VoxelCSVFrame
 from expoly.carve import CarveConfig, process, process_extend
+from expoly.frames import Frame, VoxelCSVFrame
 from expoly.polish import PolishConfig, polish_pipeline
 
 LOG = logging.getLogger("expoly.cli")
@@ -92,7 +92,7 @@ def _build_frame_for_carve(
     All h5_*_dset parameters allow customizing HDF5 dataset names.
     """
     dream3d_path = Path(dream3d_path)
-    
+
     if not dream3d_path.exists():
         raise FileNotFoundError(
             f"Dream3D file not found: {dream3d_path}. "
@@ -142,10 +142,10 @@ def _build_frame_for_carve(
             if ds_name == dataset_name:
                 failed_attr = attr
                 break
-        
+
         # Get the appropriate CLI argument name
         arg_name = attr_to_arg.get(failed_attr, "--h5-*-dset") if failed_attr else "--h5-*-dset"
-        
+
         raise RuntimeError(
             f"Missing dataset '{dataset_name}' in HDF5 file '{dream3d_path}'. "
             f"Expected path: DataContainers/*/CellData/{dataset_name} or similar. "
@@ -268,7 +268,7 @@ def _carve_all(
                 completed += 1
                 grain_id = tasks[completed - 1][0]
                 percentage = int(100 * completed / total_grains)
-                LOG.info("[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d", 
+                LOG.info("[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
                         completed, total_grains, percentage, grain_id)
                 sys.stdout.flush()  # Ensure progress appears in SLURM output files in real-time
                 chunks.append(result)
@@ -289,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ==================== run command ====================
     r = sub.add_parser("run", help="Run carve + polish pipeline")
-    
+
     # Input group
     input_group = r.add_argument_group("Input")
     input_group.add_argument("--dream3d", type=Path, required=True,
@@ -309,7 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
                                  "Example: NeighborList2")
     input_group.add_argument("--h5-dimensions-dset", type=str, default=None,
                             help="Name of DIMENSIONS dataset in HDF5 (default: DIMENSIONS)")
-    
+
     # Region selection group
     region_group = r.add_argument_group("Region Selection")
     region_group.add_argument("--hx", type=_parse_range, required=True,
@@ -318,7 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
                              help="HY range in voxel space, e.g. 0:50 (inclusive)")
     region_group.add_argument("--hz", type=_parse_range, required=True,
                              help="HZ range in voxel space, e.g. 0:50 (inclusive)")
-    
+
     # Carving group
     carve_group = r.add_argument_group("Carving")
     carve_group.add_argument("--lattice", choices=["FCC", "BCC", "DIA"], default="FCC",
@@ -336,14 +336,14 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Parallel workers for carving (default: CPU count)")
     carve_group.add_argument("--seed", type=int, default=None,
                             help="Random seed for reproducible carving (default: None)")
-    
+
     # Polish group
     polish_group = r.add_argument_group("Polish")
     polish_group.add_argument("--ovito-cutoff", type=float, default=1.6,
                              help="OVITO overlap cutoff distance in Å (default: 1.6, safe for Ni FCC)")
     polish_group.add_argument("--atom-mass", type=float, default=58.6934,
                              help="Atom mass for LAMMPS 'Masses' section (default: 58.6934, Ni)")
-    
+
     # Output group
     output_group = r.add_argument_group("Output")
     output_group.add_argument("--outdir", type=Path, default=None,
@@ -352,11 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Keep temporary files (tmp_polish.in.data, ovito_cleaned.data, overlap_mask.txt)")
     output_group.add_argument("--final-with-grain", action="store_true",
                              help="Write additional final.dump with per-atom grain-ID")
-    
+
     # General options
     r.add_argument("-v", "--verbose", action="store_true",
                   help="Enable verbose logging")
-    
+
     # ==================== doctor command ====================
     d = sub.add_parser("doctor", help="Validate input files and configuration")
     d.add_argument("--dream3d", type=Path, required=True,
@@ -381,7 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
                   help="Check if OVITO is installed and importable")
     d.add_argument("-v", "--verbose", action="store_true",
                   help="Enable verbose output")
-    
+
     return p
 
 def run_noninteractive(ns: argparse.Namespace) -> int:
@@ -447,11 +447,11 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
 def doctor_command(ns: argparse.Namespace) -> int:
     """Run doctor command to validate inputs."""
     _init_logging(ns.verbose)
-    
+
     issues = []
     warnings = []
     info = []
-    
+
     # Check file existence
     dream3d_path = Path(ns.dream3d)
     if not dream3d_path.exists():
@@ -460,7 +460,7 @@ def doctor_command(ns: argparse.Namespace) -> int:
         return 1
     else:
         info.append(f"✓ Dream3D file exists: {dream3d_path}")
-    
+
     # Try to load Frame
     frame = None
     # Build mapping with custom dataset names or defaults
@@ -484,20 +484,20 @@ def doctor_command(ns: argparse.Namespace) -> int:
         "Num_list": "--h5-neighborlist-dset",
         "Dimension": "--h5-dimensions-dset",
     }
-    
+
     # Build mapping with custom dataset names or defaults
     try:
         frame = Frame(str(dream3d_path), mapping=mapping)
-        info.append(f"✓ Successfully loaded HDF5 file")
+        info.append("✓ Successfully loaded HDF5 file")
         info.append(f"  Volume dimensions: HX=[0,{frame.HX_lim}), HY=[0,{frame.HY_lim}), HZ=[0,{frame.HZ_lim})")
-        
+
         # Check grain IDs
         unique_gids = np.unique(frame.fid)
         positive_gids = unique_gids[unique_gids > 0]
         info.append(f"  Found {len(positive_gids)} positive grain IDs (excluding void=0)")
         if len(positive_gids) == 0:
             warnings.append("⚠ No positive grain IDs found in the volume")
-        
+
     except KeyError as e:
         dataset_name = str(e).strip("'\"")
         # Find which attribute failed
@@ -514,29 +514,29 @@ def doctor_command(ns: argparse.Namespace) -> int:
         )
     except Exception as e:
         issues.append(f"✗ Failed to load HDF5 file: {e}")
-    
+
     # Validate H ranges if provided
     if ns.hx and ns.hy and ns.hz and frame is not None:
         try:
             hx0, hx1 = ns.hx
             hy0, hy1 = ns.hy
             hz0, hz1 = ns.hz
-            
+
             if hx0 < 0 or hx1 > frame.HX_lim:
                 issues.append(f"✗ HX range [{hx0}, {hx1}] is outside volume bounds [0, {frame.HX_lim})")
             else:
                 info.append(f"✓ HX range [{hx0}, {hx1}] is within bounds [0, {frame.HX_lim})")
-            
+
             if hy0 < 0 or hy1 > frame.HY_lim:
                 issues.append(f"✗ HY range [{hy0}, {hy1}] is outside volume bounds [0, {frame.HY_lim})")
             else:
                 info.append(f"✓ HY range [{hy0}, {hy1}] is within bounds [0, {frame.HY_lim})")
-            
+
             if hz0 < 0 or hz1 > frame.HZ_lim:
                 issues.append(f"✗ HZ range [{hz0}, {hz1}] is outside volume bounds [0, {frame.HZ_lim})")
             else:
                 info.append(f"✓ HZ range [{hz0}, {hz1}] is within bounds [0, {frame.HZ_lim})")
-            
+
             # Check if grains exist in range
             if not issues:  # Only if ranges are valid
                 try:
@@ -550,7 +550,7 @@ def doctor_command(ns: argparse.Namespace) -> int:
                     warnings.append(f"⚠ Could not check grains in H ranges: {e}")
         except NameError:
             pass  # Frame not loaded, skip range validation
-    
+
     # Check OVITO if requested
     if ns.check_ovito:
         try:
@@ -558,20 +558,20 @@ def doctor_command(ns: argparse.Namespace) -> int:
             info.append("✓ OVITO is installed and importable")
         except ImportError:
             issues.append("✗ OVITO is not installed. Install with: pip install ovito")
-    
+
     # Print results
     print("EXPoly Doctor - Input Validation\n" + "=" * 60)
-    
+
     if info:
         print("\n[INFO]")
         for msg in info:
             print(f"  {msg}")
-    
+
     if warnings:
         print("\n[WARNINGS]")
         for msg in warnings:
             print(f"  {msg}")
-    
+
     if issues:
         print("\n[ISSUES]")
         for msg in issues:
@@ -594,7 +594,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         return run_noninteractive(ns)
     elif ns.command == "doctor":
         return doctor_command(ns)
-    
+
     parser.print_help()
     return 2
 

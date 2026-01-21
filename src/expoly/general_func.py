@@ -1,12 +1,11 @@
 # src/expoly/general_func.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple, Dict, Optional
-
-import itertools as it
 import fractions
+import itertools as it
+from pathlib import Path
+from typing import Dict, Iterable, List, Sequence, Tuple
+
 import numpy as np
 import pandas as pd
 
@@ -338,8 +337,8 @@ def calculate_misorientation_and_hkl(this_eul: Sequence[float],
     s = 2 * np.sin(ang_rad)
     h = (R_min[1, 2] - R_min[2, 1]) / s
     k = (R_min[2, 0] - R_min[0, 2]) / s
-    l = (R_min[2, 1] - R_min[1, 2]) / s
-    return np.rad2deg(ang_rad), h, k, l
+    l_comp = (R_min[2, 1] - R_min[1, 2]) / s
+    return np.rad2deg(ang_rad), h, k, l_comp
 
 
 def calculate_misorientation_quat(this_quat: Sequence[float],
