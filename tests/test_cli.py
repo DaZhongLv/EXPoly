@@ -64,14 +64,21 @@ def test_cli_run_minimal_args(tmp_dir: Path):
     dummy_file = tmp_dir / "test.dream3d"
     dummy_file.touch()
 
-    args = parser.parse_args([
-        "run",
-        "--dream3d", str(dummy_file),
-        "--hx", "0:10",
-        "--hy", "0:10",
-        "--hz", "0:10",
-        "--lattice-constant", "3.524",
-    ])
+    args = parser.parse_args(
+        [
+            "run",
+            "--dream3d",
+            str(dummy_file),
+            "--hx",
+            "0:10",
+            "--hy",
+            "0:10",
+            "--hz",
+            "0:10",
+            "--lattice-constant",
+            "3.524",
+        ]
+    )
 
     assert args.command == "run"
     assert args.dream3d == dummy_file
@@ -89,14 +96,21 @@ def test_cli_defaults(tmp_dir: Path):
     dummy_file = tmp_dir / "test.dream3d"
     dummy_file.touch()
 
-    args = parser.parse_args([
-        "run",
-        "--dream3d", str(dummy_file),
-        "--hx", "0:10",
-        "--hy", "0:10",
-        "--hz", "0:10",
-        "--lattice-constant", "3.524",
-    ])
+    args = parser.parse_args(
+        [
+            "run",
+            "--dream3d",
+            str(dummy_file),
+            "--hx",
+            "0:10",
+            "--hy",
+            "0:10",
+            "--hz",
+            "0:10",
+            "--lattice-constant",
+            "3.524",
+        ]
+    )
 
     assert args.lattice == "FCC"
     assert args.ratio == 1.5

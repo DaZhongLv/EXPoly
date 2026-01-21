@@ -88,7 +88,7 @@ def test_deterministic_carve(frame_instance):
     # but structure should be the same
     assert len(df1) == len(df2)
     assert set(df1.columns) == set(df2.columns)
-    assert 'grain-ID' in df1.columns
-    assert 'X' in df1.columns
-    assert 'Y' in df1.columns
-    assert 'Z' in df1.columns
+    assert "grain-ID" in df1.columns
+    assert "X" in df1.columns
+    assert "Y" in df1.columns
+    assert "Z" in df1.columns

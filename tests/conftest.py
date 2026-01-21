@@ -35,7 +35,7 @@ def toy_dream3d_file(tmp_dir: Path) -> Path:
     # Euler angles (Bunge, radians)
     euler_angles = np.zeros((z_size, y_size, x_size, 3), dtype=np.float32)
     euler_angles[0:10, 0:10, 0:10, :] = [0.0, 0.0, 0.0]
-    euler_angles[10:20, 10:20, 10:20, :] = [np.pi/4, np.pi/6, np.pi/3]
+    euler_angles[10:20, 10:20, 10:20, :] = [np.pi / 4, np.pi / 6, np.pi / 3]
 
     # Neighbor list (simple: each grain has 1 neighbor)
     num_neighbors = np.array([1, 1], dtype=np.int32)
@@ -44,19 +44,19 @@ def toy_dream3d_file(tmp_dir: Path) -> Path:
     # Dimensions
     dimensions = np.array([x_size, y_size, z_size], dtype=np.int32)
 
-    with h5py.File(h5_path, 'w') as f:
-        container = f.create_group('DataContainers')
-        volume = container.create_group('SyntheticVolumeDataContainer')
-        cell_data = volume.create_group('CellData')
-        cell_data.create_dataset('FeatureIds', data=feature_ids)
-        cell_data.create_dataset('EulerAngles', data=euler_angles)
+    with h5py.File(h5_path, "w") as f:
+        container = f.create_group("DataContainers")
+        volume = container.create_group("SyntheticVolumeDataContainer")
+        cell_data = volume.create_group("CellData")
+        cell_data.create_dataset("FeatureIds", data=feature_ids)
+        cell_data.create_dataset("EulerAngles", data=euler_angles)
 
-        feature_data = volume.create_group('CellFeatureData')
-        feature_data.create_dataset('NumNeighbors', data=num_neighbors)
-        feature_data.create_dataset('NeighborList', data=neighbor_list)
+        feature_data = volume.create_group("CellFeatureData")
+        feature_data.create_dataset("NumNeighbors", data=num_neighbors)
+        feature_data.create_dataset("NeighborList", data=neighbor_list)
 
-        geometry = volume.create_group('_SIMPL_GEOMETRY')
-        geometry.create_dataset('DIMENSIONS', data=dimensions)
+        geometry = volume.create_group("_SIMPL_GEOMETRY")
+        geometry.create_dataset("DIMENSIONS", data=dimensions)
 
     return h5_path
 

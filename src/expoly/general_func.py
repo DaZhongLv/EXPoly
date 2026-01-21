@@ -12,6 +12,7 @@ import pandas as pd
 # Plotly is optional; only required if you call the plotting helpers.
 try:
     import plotly.express as px  # type: ignore
+
     _HAS_PLOTLY = True
 except Exception:
     _HAS_PLOTLY = False
@@ -54,6 +55,7 @@ __all__ = [
 
 # ------------------------ Basic utilities ------------------------
 
+
 def generate_extend_cube(copy_size: int) -> np.ndarray:
     """
     Build a cube of offsets centered at the origin. The side length is (2*scale+1),
@@ -63,7 +65,7 @@ def generate_extend_cube(copy_size: int) -> np.ndarray:
     if copy_size <= 0:
         raise ValueError("copy_size must be positive.")
     scale = (copy_size - 1) / 2
-    x, y, z = np.mgrid[-scale:scale + 1, -scale:scale + 1, -scale:scale + 1]
+    x, y, z = np.mgrid[-scale : scale + 1, -scale : scale + 1, -scale : scale + 1]
     pos = np.vstack((x.ravel(), y.ravel(), z.ravel())).T
     return pos / copy_size
 
@@ -92,6 +94,7 @@ def translate_points(base_xyz: np.ndarray, offsets: np.ndarray) -> np.ndarray:
 
 
 # ------------------------ Orientation conversions ------------------------
+
 
 def quat2eul(
     quat: Sequence[float],
@@ -133,11 +136,14 @@ def eul2rot_bunge(theta: Sequence[float], radians: bool = True) -> np.ndarray:
     c0, c1, c2 = np.cos(t[0]), np.cos(t[1]), np.cos(t[2])
     s0, s1, s2 = np.sin(t[0]), np.sin(t[1]), np.sin(t[2])
 
-    R = np.array([
-        [c2 * c0 - c1 * s0 * s2,  c2 * s0 + c1 * c0 * s2,  s2 * s1],
-        [-s2 * c0 - c1 * s0 * c2, -s2 * s0 + c1 * c0 * c2, c2 * s1],
-        [s1 * s0,                 -s1 * c0,                c1]
-    ], dtype=float)
+    R = np.array(
+        [
+            [c2 * c0 - c1 * s0 * s2, c2 * s0 + c1 * c0 * s2, s2 * s1],
+            [-s2 * c0 - c1 * s0 * c2, -s2 * s0 + c1 * c0 * c2, c2 * s1],
+            [s1 * s0, -s1 * c0, c1],
+        ],
+        dtype=float,
+    )
     R[np.abs(R) < EPS] = 0.0
     return R
 
@@ -153,11 +159,14 @@ def eul2rot_ZYX(theta: Sequence[float], radians: bool = True) -> np.ndarray:
     c0, c1, c2 = np.cos(t[0]), np.cos(t[1]), np.cos(t[2])
     s0, s1, s2 = np.sin(t[0]), np.sin(t[1]), np.sin(t[2])
 
-    R = np.array([
-        [c0 * c1,                c0 * s1 * s2 - s0 * c2,  c0 * s1 * c2 + s0 * s2],
-        [s0 * c1,                s0 * s1 * s2 + c0 * c2,  s0 * s1 * c2 - c0 * s2],
-        [-s1,                    c1 * s2,                 c1 * c2]
-    ], dtype=float)
+    R = np.array(
+        [
+            [c0 * c1, c0 * s1 * s2 - s0 * c2, c0 * s1 * c2 + s0 * s2],
+            [s0 * c1, s0 * s1 * s2 + c0 * c2, s0 * s1 * c2 - c0 * s2],
+            [-s1, c1 * s2, c1 * c2],
+        ],
+        dtype=float,
+    )
     R[np.abs(R) < 1e-5] = 0.0
     return R
 
@@ -187,11 +196,14 @@ def quat2rot(quat: Sequence[float], in_Ovito: bool = False) -> np.ndarray:
     if n < EPS:
         raise ValueError("Invalid quaternion (near zero).")
     w, x, y, z = q / n
-    R = np.array([
-        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z),     2 * (x * z + w * y)],
-        [2 * (x * y + w * z),     1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
-        [2 * (x * z - w * y),     2 * (y * z + w * x),     1 - 2 * (x * x + y * y)]
-    ], dtype=float)
+    R = np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+        ],
+        dtype=float,
+    )
     return R
 
 
@@ -217,7 +229,7 @@ def get_lcm_numerator(line: np.ndarray) -> np.ndarray:
     dens = np.asarray(dens, dtype=np.int64)
 
     lcm = np.lcm.reduce(dens)
-    factor = (lcm // dens)
+    factor = lcm // dens
     return (factor * nums).astype(int)
 
 
@@ -230,7 +242,7 @@ def Xori2rot(X_ori: Sequence[float]) -> np.ndarray:
     X_xy = np.array([X_ori[0], X_ori[1], 0.0], dtype=float)
     if np.linalg.norm(X_xy) < EPS or np.linalg.norm(X_ori) < EPS:
         return np.eye(3)
-    Z = np.pi/2 - np.arccos(np.dot(X_xy, np.array([0, 1, 0])) / np.linalg.norm(X_xy))
+    Z = np.pi / 2 - np.arccos(np.dot(X_xy, np.array([0, 1, 0])) / np.linalg.norm(X_xy))
     Y = -np.arccos(np.dot(X_ori, X_xy) / (np.linalg.norm(X_xy) * np.linalg.norm(X_ori)))
     return eul2rot_ZYX([Z, Y, 0.0], radians=True)
 
@@ -256,6 +268,7 @@ def Xori2XYZ(X_ori: Sequence[float]) -> List[np.ndarray]:
 
 
 # ------------------------ Misorientation & symmetry ------------------------
+
 
 def rotation_angle(R: np.ndarray, degrees: bool = False) -> float:
     """Angle (in [0, pi]) from a rotation matrix."""
@@ -313,9 +326,9 @@ def find_theta(R_ab: np.ndarray, symmetry_ops: Sequence[np.ndarray], to_hkl: boo
     return np.rad2deg(best_ang)
 
 
-def calculate_misorientation(this_eul: Sequence[float],
-                             other_eul: Sequence[float],
-                             symmetry_ops: Sequence[np.ndarray]) -> float:
+def calculate_misorientation(
+    this_eul: Sequence[float], other_eul: Sequence[float], symmetry_ops: Sequence[np.ndarray]
+) -> float:
     """Misorientation (degrees) from two Bunge Euler triplets."""
     Ra = eul2rot_bunge(this_eul, radians=True)
     Rb = eul2rot_bunge(other_eul, radians=True)
@@ -323,9 +336,9 @@ def calculate_misorientation(this_eul: Sequence[float],
     return find_theta(R, symmetry_ops, to_hkl=False)
 
 
-def calculate_misorientation_and_hkl(this_eul: Sequence[float],
-                                     other_eul: Sequence[float],
-                                     symmetry_ops: Sequence[np.ndarray]):
+def calculate_misorientation_and_hkl(
+    this_eul: Sequence[float], other_eul: Sequence[float], symmetry_ops: Sequence[np.ndarray]
+):
     """
     Misorientation (degrees) and the corresponding (h,k,l)-like components
     derived from the minimum-angle equivalent rotation.
@@ -341,10 +354,12 @@ def calculate_misorientation_and_hkl(this_eul: Sequence[float],
     return np.rad2deg(ang_rad), h, k, l_comp
 
 
-def calculate_misorientation_quat(this_quat: Sequence[float],
-                                  other_quat: Sequence[float],
-                                  symmetry_ops: Sequence[np.ndarray],
-                                  in_Ovito: bool = False) -> float:
+def calculate_misorientation_quat(
+    this_quat: Sequence[float],
+    other_quat: Sequence[float],
+    symmetry_ops: Sequence[np.ndarray],
+    in_Ovito: bool = False,
+) -> float:
     """Misorientation (degrees) from two quaternions."""
     Ra = quat2rot(this_quat, in_Ovito=in_Ovito)
     Rb = quat2rot(other_quat, in_Ovito=in_Ovito)
@@ -352,9 +367,9 @@ def calculate_misorientation_quat(this_quat: Sequence[float],
     return find_theta(R, symmetry_ops, to_hkl=False)
 
 
-def calculate_misorientation_R(Ra: np.ndarray,
-                               Rb: np.ndarray,
-                               symmetry_ops: Sequence[np.ndarray]) -> float:
+def calculate_misorientation_R(
+    Ra: np.ndarray, Rb: np.ndarray, symmetry_ops: Sequence[np.ndarray]
+) -> float:
     """Misorientation (degrees) from two rotation matrices."""
     R = Ra @ Rb.T
     return find_theta(R, symmetry_ops, to_hkl=False)
@@ -366,6 +381,7 @@ SYMMETRY_CUBIC_24 = cubic_symmetry_matrices(proper_only=True)
 
 # ------------------------ Alignment / frame mapping (no hardcoded paths) ------------------------
 
+
 def load_x_sequence(path: Path | str, sep: str = "\t") -> pd.DataFrame:
     """
     Load frame-to-frame grain ID mapping (columns like A1, A2, ...).
@@ -374,8 +390,13 @@ def load_x_sequence(path: Path | str, sep: str = "\t") -> pd.DataFrame:
     return pd.read_csv(p, sep=sep)
 
 
-def get_step_grain_ID(grain_ID: int, in_frame: int, target_frame: int,
-                      x_sequence: pd.DataFrame, return_all: bool = False):
+def get_step_grain_ID(
+    grain_ID: int,
+    in_frame: int,
+    target_frame: int,
+    x_sequence: pd.DataFrame,
+    return_all: bool = False,
+):
     """
     Map a grain ID between frames using an X-sequence dataframe.
     Provide the dataframe via load_x_sequence() and pass it here.
@@ -395,7 +416,7 @@ def load_alignment(path: Path | str) -> pd.DataFrame:
     Load cumulative alignment shifts per frame; columns: HZ, HY, HX.
     """
     p = Path(path)
-    df = pd.read_csv(p, header=None, names=['HZ', 'HY', 'HX'])
+    df = pd.read_csv(p, header=None, names=["HZ", "HY", "HX"])
     return df
 
 
@@ -408,8 +429,9 @@ def _sum_alignment(alignment: pd.DataFrame, start: int, end: int) -> np.ndarray:
     return v if start < end else -v
 
 
-def align_XYZ(XYZ: Sequence[float], from_frame: int, to_frame: int,
-              alignment: pd.DataFrame) -> List[float]:
+def align_XYZ(
+    XYZ: Sequence[float], from_frame: int, to_frame: int, alignment: pd.DataFrame
+) -> List[float]:
     """
     Apply alignment shifts to a single coordinate [X,Y,Z] from one frame to another.
     """
@@ -420,37 +442,44 @@ def align_XYZ(XYZ: Sequence[float], from_frame: int, to_frame: int,
     return out.tolist()
 
 
-def align_grain_H(Grain_: pd.DataFrame, from_frame: int, to_frame: int,
-                  alignment: pd.DataFrame) -> pd.DataFrame:
+def align_grain_H(
+    Grain_: pd.DataFrame, from_frame: int, to_frame: int, alignment: pd.DataFrame
+) -> pd.DataFrame:
     """
     Apply alignment to a dataframe with columns ['HZ','HY','HX'].
     Returns a new dataframe.
     """
     delta = _sum_alignment(alignment, from_frame, to_frame)
     out = Grain_.copy()
-    out['HZ'] += delta[0]
-    out['HY'] += delta[1]
-    out['HX'] += delta[2]
+    out["HZ"] += delta[0]
+    out["HY"] += delta[1]
+    out["HX"] += delta[2]
     return out
 
 
-def align_grain_FCC(Grain_: pd.DataFrame, from_frame: int, to_frame: int,
-                    alignment: pd.DataFrame) -> pd.DataFrame:
+def align_grain_FCC(
+    Grain_: pd.DataFrame, from_frame: int, to_frame: int, alignment: pd.DataFrame
+) -> pd.DataFrame:
     """
     Apply alignment to a dataframe with columns ['X','Y','Z'].
     Returns a new dataframe.
     """
     delta = _sum_alignment(alignment, from_frame, to_frame)
     out = Grain_.copy()
-    out['Z'] += delta[0]
-    out['Y'] += delta[1]
-    out['X'] += delta[2]
+    out["Z"] += delta[0]
+    out["Y"] += delta[1]
+    out["X"] += delta[2]
     return out
 
 
-def align_Hrange(HX_range: Sequence[int], HY_range: Sequence[int], HZ_range: Sequence[int],
-                 from_frame: int, to_frame: int,
-                 alignment: pd.DataFrame) -> Tuple[List[float], List[float], List[float]]:
+def align_Hrange(
+    HX_range: Sequence[int],
+    HY_range: Sequence[int],
+    HZ_range: Sequence[int],
+    from_frame: int,
+    to_frame: int,
+    alignment: pd.DataFrame,
+) -> Tuple[List[float], List[float], List[float]]:
     """
     Apply alignment to a bounding box expressed as HX/HY/HZ ranges.
     Returns three [low, high] lists for HX/HY/HZ after alignment.
@@ -464,23 +493,29 @@ def align_Hrange(HX_range: Sequence[int], HY_range: Sequence[int], HZ_range: Seq
 
 # ------------------------ Selection / visualization (Plotly optional) ------------------------
 
+
 def check_center_grain_general(DATA_: pd.DataFrame, buffer: float, min_size: int) -> List[int]:
     """
     Select grain IDs that are sufficiently away from the boundaries and
     have at least `min_size` points. Requires columns: X, Y, Z, grain-ID.
     """
     ids = []
-    uniq = np.unique(DATA_['grain-ID'])
-    xmin, xmax = DATA_['X'].min(), DATA_['X'].max()
-    ymin, ymax = DATA_['Y'].min(), DATA_['Y'].max()
-    zmin, zmax = DATA_['Z'].min(), DATA_['Z'].max()
+    uniq = np.unique(DATA_["grain-ID"])
+    xmin, xmax = DATA_["X"].min(), DATA_["X"].max()
+    ymin, ymax = DATA_["Y"].min(), DATA_["Y"].max()
+    zmin, zmax = DATA_["Z"].min(), DATA_["Z"].max()
 
     for gid in uniq:
-        g = DATA_[DATA_['grain-ID'] == gid]
-        if (len(g) > min_size and
-            g['X'].min() > xmin + buffer and g['X'].max() < xmax - buffer and
-            g['Y'].min() > ymin + buffer and g['Y'].max() < ymax - buffer and
-            g['Z'].min() > zmin + buffer and g['Z'].max() < zmax - buffer):
+        g = DATA_[DATA_["grain-ID"] == gid]
+        if (
+            len(g) > min_size
+            and g["X"].min() > xmin + buffer
+            and g["X"].max() < xmax - buffer
+            and g["Y"].min() > ymin + buffer
+            and g["Y"].max() < ymax - buffer
+            and g["Z"].min() > zmin + buffer
+            and g["Z"].max() < zmax - buffer
+        ):
             ids.append(int(gid))
     return ids
 
@@ -496,23 +531,32 @@ def plot_area_ptm(DATA_: pd.DataFrame, Xmax, Xmin, Ymax, Ymin, Zmax, Zmin):
     Returns a Plotly figure; the caller decides whether to `fig.show()`.
     """
     _ensure_plotly()
-    data = DATA_[(DATA_['X'] > Xmin) & (DATA_['X'] < Xmax) &
-                 (DATA_['Y'] > Ymin) & (DATA_['Y'] < Ymax) &
-                 (DATA_['Z'] > Zmin) & (DATA_['Z'] < Zmax)].copy()
-    if 'ptm-type' not in data.columns and 'ptm_type' in data.columns:
-        data['ptm-type'] = data['ptm_type'].astype('string')
+    data = DATA_[
+        (DATA_["X"] > Xmin)
+        & (DATA_["X"] < Xmax)
+        & (DATA_["Y"] > Ymin)
+        & (DATA_["Y"] < Ymax)
+        & (DATA_["Z"] > Zmin)
+        & (DATA_["Z"] < Zmax)
+    ].copy()
+    if "ptm-type" not in data.columns and "ptm_type" in data.columns:
+        data["ptm-type"] = data["ptm_type"].astype("string")
     else:
-        data['ptm-type'] = data['ptm-type'].astype('string')
+        data["ptm-type"] = data["ptm-type"].astype("string")
 
     fig = px.scatter_3d(
-        data, x='X', y='Y', z='Z', color='ptm-type',
+        data,
+        x="X",
+        y="Y",
+        z="Z",
+        color="ptm-type",
         color_discrete_map={
-            '0.0': 'rgba(5, 5, 5,0.1)',
-            '1.0': 'rgba(240,240,240,0.0)',
-            '2.0': 'rgba(63,158,22,1)',
-            '3.0': 'rgba(247,192,38,0.6)',
-            '4.0': 'rgba(209,82,78,0.6)',
-        }
+            "0.0": "rgba(5, 5, 5,0.1)",
+            "1.0": "rgba(240,240,240,0.0)",
+            "2.0": "rgba(63,158,22,1)",
+            "3.0": "rgba(247,192,38,0.6)",
+            "4.0": "rgba(209,82,78,0.6)",
+        },
     )
     return fig
 
@@ -523,8 +567,13 @@ def plot_area_ID(DATA_: pd.DataFrame, Xmax, Xmin, Ymax, Ymin, Zmax, Zmin):
     Returns a Plotly figure; the caller decides whether to `fig.show()`.
     """
     _ensure_plotly()
-    data = DATA_[(DATA_['X'] > Xmin) & (DATA_['X'] < Xmax) &
-                 (DATA_['Y'] > Ymin) & (DATA_['Y'] < Ymax) &
-                 (DATA_['Z'] > Zmin) & (DATA_['Z'] < Zmax)]
-    fig = px.scatter_3d(data, x='X', y='Y', z='Z', color='grain-ID')
+    data = DATA_[
+        (DATA_["X"] > Xmin)
+        & (DATA_["X"] < Xmax)
+        & (DATA_["Y"] > Ymin)
+        & (DATA_["Y"] < Ymax)
+        & (DATA_["Z"] > Zmin)
+        & (DATA_["Z"] < Zmax)
+    ]
+    fig = px.scatter_3d(data, x="X", y="Y", z="Z", color="grain-ID")
     return fig

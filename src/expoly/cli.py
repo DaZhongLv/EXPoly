@@ -21,6 +21,7 @@ LOG = logging.getLogger("expoly.cli")
 
 # --------------------------- small helpers ---------------------------
 
+
 def _parse_range(s: str) -> Tuple[int, int]:
     """
     Parse 'a:b' (also tolerates '[a:b]', spaces, etc.) → (a, b), both int.
@@ -31,12 +32,14 @@ def _parse_range(s: str) -> Tuple[int, int]:
     a, b = s.split(":", 1)
     return (int(a.strip()), int(b.strip()))
 
+
 def _mk_run_dir(root: Path | None = None) -> Path:
     ts = int(time.time())
     base = Path("runs") if root is None else Path(root)
     path = base / f"expoly-{ts}"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
 
 def _init_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
@@ -48,18 +51,24 @@ def _init_logging(verbose: bool) -> None:
     # Ensure output is flushed immediately (important for SLURM/supercomputers)
     # This ensures progress messages appear in SLURM output files in real-time
     import sys
-    if hasattr(sys.stdout, 'reconfigure'):
+
+    if hasattr(sys.stdout, "reconfigure"):
         try:
             sys.stdout.reconfigure(line_buffering=True)
         except (AttributeError, ValueError):
             pass  # Fallback if reconfigure not available
     # Ensure output is flushed immediately (important for SLURM/supercomputers)
     import sys
-    sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
+
+    sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, "reconfigure") else None
+
 
 # --------------------------- grain selection ---------------------------
 
-def _pick_grain_ids(f: Frame, hx: Tuple[int, int], hy: Tuple[int, int], hz: Tuple[int, int]) -> np.ndarray:
+
+def _pick_grain_ids(
+    f: Frame, hx: Tuple[int, int], hy: Tuple[int, int], hz: Tuple[int, int]
+) -> np.ndarray:
     """
     Select grains (>0) within Dream3D voxel ranges.
     """
@@ -77,6 +86,7 @@ def _pick_grain_ids(f: Frame, hx: Tuple[int, int], hy: Tuple[int, int], hz: Tupl
 
 
 # --------------------------- frame builder ---------------------------
+
 
 def _build_frame_for_carve(
     dream3d_path: Path | str,
@@ -124,8 +134,7 @@ def _build_frame_for_carve(
         else:
             if not Path(voxel_csv).exists():
                 raise FileNotFoundError(
-                    f"Voxel CSV file not found: {voxel_csv}. "
-                    f"Please check the file path."
+                    f"Voxel CSV file not found: {voxel_csv}. " f"Please check the file path."
                 )
             # Voxel-CSV + HDF5 combination
             return VoxelCSVFrame(
@@ -159,15 +168,31 @@ def _build_frame_for_carve(
         ) from e
 
 
-
 # --------------------------- carve runner ---------------------------
+
 
 def _carve_one(args) -> pd.DataFrame:
     """
     Subprocess worker: select process based on extend flag; raises exception on failure (main process logs).
     """
-    (grain_id, dream3d_path, hx, hy, hz, lattice, ratio, extend, unit_extend_ratio, seed, voxel_csv,
-     h5_grain_dset, h5_euler_dset, h5_numneighbors_dset, h5_neighborlist_dset, h5_dimensions_dset) = args
+    (
+        grain_id,
+        dream3d_path,
+        hx,
+        hy,
+        hz,
+        lattice,
+        ratio,
+        extend,
+        unit_extend_ratio,
+        seed,
+        voxel_csv,
+        h5_grain_dset,
+        h5_euler_dset,
+        h5_numneighbors_dset,
+        h5_neighborlist_dset,
+        h5_dimensions_dset,
+    ) = args
 
     # Each subprocess opens its own Frame (avoid cross-process handle issues)
     frame = _build_frame_for_carve(
@@ -193,16 +218,22 @@ def _carve_one(args) -> pd.DataFrame:
         df = process(grain_id, frame, ccfg)
 
     # Required column order: X,Y,Z,HX,HY,HZ,margin-ID,grain-ID
-    cols = ['X','Y','Z','HX','HY','HZ','margin-ID','grain-ID']
+    cols = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
     df = df[cols].copy()
     return df
 
+
 def _carve_all(
     dream3d: Path,
-    hx: Tuple[int, int], hy: Tuple[int, int], hz: Tuple[int, int],
-    lattice: str, ratio: float,
-    extend: bool, unit_extend_ratio: int,
-    workers: int, seed: int | None,
+    hx: Tuple[int, int],
+    hy: Tuple[int, int],
+    hz: Tuple[int, int],
+    lattice: str,
+    ratio: float,
+    extend: bool,
+    unit_extend_ratio: int,
+    workers: int,
+    seed: int | None,
     voxel_csv: Path | None,
     h5_grain_dset: str | None,
     h5_euler_dset: str | None = None,
@@ -228,9 +259,13 @@ def _carve_all(
         (
             int(g),
             str(dream3d),
-            hx, hy, hz,
-            lattice, ratio,
-            extend, unit_extend_ratio,
+            hx,
+            hy,
+            hz,
+            lattice,
+            ratio,
+            extend,
+            unit_extend_ratio,
             seed,
             voxel_csv_str,
             h5_grain_dset,
@@ -244,6 +279,7 @@ def _carve_all(
 
     # Process grains with progress display
     import sys
+
     if workers <= 1:
         chunks: List[pd.DataFrame] = []
         LOG.info("[carve] Processing %d grains sequentially...", total_grains)
@@ -258,6 +294,7 @@ def _carve_all(
         df_all = pd.concat(chunks, ignore_index=True)
     else:
         import multiprocessing as mp
+
         LOG.info("[carve] Processing %d grains with %d workers...", total_grains, workers)
         sys.stdout.flush()
         with mp.get_context("spawn").Pool(processes=workers) as pool:
@@ -268,8 +305,13 @@ def _carve_all(
                 completed += 1
                 grain_id = tasks[completed - 1][0]
                 percentage = int(100 * completed / total_grains)
-                LOG.info("[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
-                        completed, total_grains, percentage, grain_id)
+                LOG.info(
+                    "[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
+                    completed,
+                    total_grains,
+                    percentage,
+                    grain_id,
+                )
                 sys.stdout.flush()  # Ensure progress appears in SLURM output files in real-time
                 chunks.append(result)
         df_all = pd.concat(chunks, ignore_index=True)
@@ -277,7 +319,9 @@ def _carve_all(
     LOG.info("[done] merged %d grains → %d rows", len(gids), len(df_all))
     return df_all
 
+
 # --------------------------- CLI wiring ---------------------------
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -292,97 +336,199 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Input group
     input_group = r.add_argument_group("Input")
-    input_group.add_argument("--dream3d", type=Path, required=True,
-                            help="Path to Dream3D HDF5 file (.dream3d)")
-    input_group.add_argument("--voxel-csv", type=Path, default=None,
-                            help="Optional voxel grid CSV (whitespace-separated). "
-                                 "If provided, use VoxelCSVFrame (CSV grid + HDF5 orientations)")
-    input_group.add_argument("--h5-grain-dset", type=str, default=None,
-                            help="Name of grain-ID dataset in HDF5 (default: FeatureIds). "
-                                 "Example: GrainID")
-    input_group.add_argument("--h5-euler-dset", type=str, default=None,
-                            help="Name of Euler angles dataset in HDF5 (default: EulerAngles)")
-    input_group.add_argument("--h5-numneighbors-dset", type=str, default=None,
-                            help="Name of NumNeighbors dataset in HDF5 (default: NumNeighbors)")
-    input_group.add_argument("--h5-neighborlist-dset", type=str, default=None,
-                            help="Name of NeighborList dataset in HDF5 (default: NeighborList). "
-                                 "Example: NeighborList2")
-    input_group.add_argument("--h5-dimensions-dset", type=str, default=None,
-                            help="Name of DIMENSIONS dataset in HDF5 (default: DIMENSIONS)")
+    input_group.add_argument(
+        "--dream3d", type=Path, required=True, help="Path to Dream3D HDF5 file (.dream3d)"
+    )
+    input_group.add_argument(
+        "--voxel-csv",
+        type=Path,
+        default=None,
+        help="Optional voxel grid CSV (whitespace-separated). "
+        "If provided, use VoxelCSVFrame (CSV grid + HDF5 orientations)",
+    )
+    input_group.add_argument(
+        "--h5-grain-dset",
+        type=str,
+        default=None,
+        help="Name of grain-ID dataset in HDF5 (default: FeatureIds). " "Example: GrainID",
+    )
+    input_group.add_argument(
+        "--h5-euler-dset",
+        type=str,
+        default=None,
+        help="Name of Euler angles dataset in HDF5 (default: EulerAngles)",
+    )
+    input_group.add_argument(
+        "--h5-numneighbors-dset",
+        type=str,
+        default=None,
+        help="Name of NumNeighbors dataset in HDF5 (default: NumNeighbors)",
+    )
+    input_group.add_argument(
+        "--h5-neighborlist-dset",
+        type=str,
+        default=None,
+        help="Name of NeighborList dataset in HDF5 (default: NeighborList). "
+        "Example: NeighborList2",
+    )
+    input_group.add_argument(
+        "--h5-dimensions-dset",
+        type=str,
+        default=None,
+        help="Name of DIMENSIONS dataset in HDF5 (default: DIMENSIONS)",
+    )
 
     # Region selection group
     region_group = r.add_argument_group("Region Selection")
-    region_group.add_argument("--hx", type=_parse_range, required=True,
-                             help="HX range in voxel space, e.g. 0:50 (inclusive)")
-    region_group.add_argument("--hy", type=_parse_range, required=True,
-                             help="HY range in voxel space, e.g. 0:50 (inclusive)")
-    region_group.add_argument("--hz", type=_parse_range, required=True,
-                             help="HZ range in voxel space, e.g. 0:50 (inclusive)")
+    region_group.add_argument(
+        "--hx",
+        type=_parse_range,
+        required=True,
+        help="HX range in voxel space, e.g. 0:50 (inclusive)",
+    )
+    region_group.add_argument(
+        "--hy",
+        type=_parse_range,
+        required=True,
+        help="HY range in voxel space, e.g. 0:50 (inclusive)",
+    )
+    region_group.add_argument(
+        "--hz",
+        type=_parse_range,
+        required=True,
+        help="HZ range in voxel space, e.g. 0:50 (inclusive)",
+    )
 
     # Carving group
     carve_group = r.add_argument_group("Carving")
-    carve_group.add_argument("--lattice", choices=["FCC", "BCC", "DIA"], default="FCC",
-                            help="Lattice type: FCC (Face-Centered cubic), BCC (Body-Centered cubic), DIA (diamond) (default: FCC)")
-    carve_group.add_argument("--ratio", type=float, default=1.5,
-                            help="Lattice-to-voxel scale ratio (default: 1.5). "
-                                 "Larger ratio → smaller grain size")
-    carve_group.add_argument("--lattice-constant", type=float, required=True,
-                            help="Physical lattice constant in Å (e.g., 3.524 for Ni)")
-    carve_group.add_argument("--extend", action="store_true",
-                            help="Use extended-neighborhood pipeline for carving")
-    carve_group.add_argument("--unit-extend-ratio", type=int, default=3,
-                            help="Unit extend ratio for extended pipeline (default: 3, recommend odd numbers)")
-    carve_group.add_argument("--workers", type=int, default=os.cpu_count() or 1,
-                            help="Parallel workers for carving (default: CPU count)")
-    carve_group.add_argument("--seed", type=int, default=None,
-                            help="Random seed for reproducible carving (default: None)")
+    carve_group.add_argument(
+        "--lattice",
+        choices=["FCC", "BCC", "DIA"],
+        default="FCC",
+        help="Lattice type: FCC (Face-Centered cubic), BCC (Body-Centered cubic), DIA (diamond) (default: FCC)",
+    )
+    carve_group.add_argument(
+        "--ratio",
+        type=float,
+        default=1.5,
+        help="Lattice-to-voxel scale ratio (default: 1.5). " "Larger ratio → smaller grain size",
+    )
+    carve_group.add_argument(
+        "--lattice-constant",
+        type=float,
+        required=True,
+        help="Physical lattice constant in Å (e.g., 3.524 for Ni)",
+    )
+    carve_group.add_argument(
+        "--extend", action="store_true", help="Use extended-neighborhood pipeline for carving"
+    )
+    carve_group.add_argument(
+        "--unit-extend-ratio",
+        type=int,
+        default=3,
+        help="Unit extend ratio for extended pipeline (default: 3, recommend odd numbers)",
+    )
+    carve_group.add_argument(
+        "--workers",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="Parallel workers for carving (default: CPU count)",
+    )
+    carve_group.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducible carving (default: None)",
+    )
 
     # Polish group
     polish_group = r.add_argument_group("Polish")
-    polish_group.add_argument("--ovito-cutoff", type=float, default=1.6,
-                             help="OVITO overlap cutoff distance in Å (default: 1.6, safe for Ni FCC)")
-    polish_group.add_argument("--atom-mass", type=float, default=58.6934,
-                             help="Atom mass for LAMMPS 'Masses' section (default: 58.6934, Ni)")
+    polish_group.add_argument(
+        "--ovito-cutoff",
+        type=float,
+        default=1.6,
+        help="OVITO overlap cutoff distance in Å (default: 1.6, safe for Ni FCC)",
+    )
+    polish_group.add_argument(
+        "--atom-mass",
+        type=float,
+        default=58.6934,
+        help="Atom mass for LAMMPS 'Masses' section (default: 58.6934, Ni)",
+    )
 
     # Output group
     output_group = r.add_argument_group("Output")
-    output_group.add_argument("--outdir", type=Path, default=None,
-                             help="Root output directory (default: runs/expoly-<timestamp>)")
-    output_group.add_argument("--keep-tmp", action="store_true",
-                             help="Keep temporary files (tmp_polish.in.data, ovito_cleaned.data, overlap_mask.txt)")
-    output_group.add_argument("--final-with-grain", action="store_true",
-                             help="Write additional final.dump with per-atom grain-ID")
+    output_group.add_argument(
+        "--outdir",
+        type=Path,
+        default=None,
+        help="Root output directory (default: runs/expoly-<timestamp>)",
+    )
+    output_group.add_argument(
+        "--keep-tmp",
+        action="store_true",
+        help="Keep temporary files (tmp_polish.in.data, ovito_cleaned.data, overlap_mask.txt)",
+    )
+    output_group.add_argument(
+        "--final-with-grain",
+        action="store_true",
+        help="Write additional final.dump with per-atom grain-ID",
+    )
 
     # General options
-    r.add_argument("-v", "--verbose", action="store_true",
-                  help="Enable verbose logging")
+    r.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
     # ==================== doctor command ====================
     d = sub.add_parser("doctor", help="Validate input files and configuration")
-    d.add_argument("--dream3d", type=Path, required=True,
-                  help="Path to Dream3D HDF5 file to validate")
-    d.add_argument("--h5-grain-dset", type=str, default=None,
-                  help="Name of grain-ID dataset (default: FeatureIds)")
-    d.add_argument("--h5-euler-dset", type=str, default=None,
-                  help="Name of Euler angles dataset (default: EulerAngles)")
-    d.add_argument("--h5-numneighbors-dset", type=str, default=None,
-                  help="Name of NumNeighbors dataset (default: NumNeighbors)")
-    d.add_argument("--h5-neighborlist-dset", type=str, default=None,
-                  help="Name of NeighborList dataset (default: NeighborList)")
-    d.add_argument("--h5-dimensions-dset", type=str, default=None,
-                  help="Name of DIMENSIONS dataset (default: DIMENSIONS)")
-    d.add_argument("--hx", type=_parse_range, default=None,
-                  help="HX range to validate (optional, e.g. 0:50)")
-    d.add_argument("--hy", type=_parse_range, default=None,
-                  help="HY range to validate (optional, e.g. 0:50)")
-    d.add_argument("--hz", type=_parse_range, default=None,
-                  help="HZ range to validate (optional, e.g. 0:50)")
-    d.add_argument("--check-ovito", action="store_true",
-                  help="Check if OVITO is installed and importable")
-    d.add_argument("-v", "--verbose", action="store_true",
-                  help="Enable verbose output")
+    d.add_argument(
+        "--dream3d", type=Path, required=True, help="Path to Dream3D HDF5 file to validate"
+    )
+    d.add_argument(
+        "--h5-grain-dset",
+        type=str,
+        default=None,
+        help="Name of grain-ID dataset (default: FeatureIds)",
+    )
+    d.add_argument(
+        "--h5-euler-dset",
+        type=str,
+        default=None,
+        help="Name of Euler angles dataset (default: EulerAngles)",
+    )
+    d.add_argument(
+        "--h5-numneighbors-dset",
+        type=str,
+        default=None,
+        help="Name of NumNeighbors dataset (default: NumNeighbors)",
+    )
+    d.add_argument(
+        "--h5-neighborlist-dset",
+        type=str,
+        default=None,
+        help="Name of NeighborList dataset (default: NeighborList)",
+    )
+    d.add_argument(
+        "--h5-dimensions-dset",
+        type=str,
+        default=None,
+        help="Name of DIMENSIONS dataset (default: DIMENSIONS)",
+    )
+    d.add_argument(
+        "--hx", type=_parse_range, default=None, help="HX range to validate (optional, e.g. 0:50)"
+    )
+    d.add_argument(
+        "--hy", type=_parse_range, default=None, help="HY range to validate (optional, e.g. 0:50)"
+    )
+    d.add_argument(
+        "--hz", type=_parse_range, default=None, help="HZ range to validate (optional, e.g. 0:50)"
+    )
+    d.add_argument(
+        "--check-ovito", action="store_true", help="Check if OVITO is installed and importable"
+    )
+    d.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
 
     return p
+
 
 def run_noninteractive(ns: argparse.Namespace) -> int:
     _init_logging(ns.verbose)
@@ -393,16 +539,21 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
     # 1) carve (extendable)
     df_all = _carve_all(
         dream3d=ns.dream3d,
-        hx=(hx0, hx1), hy=(hy0, hy1), hz=(hz0, hz1),
-        lattice=ns.lattice, ratio=ns.ratio,
-        extend=ns.extend, unit_extend_ratio=ns.unit_extend_ratio,
-        workers=int(ns.workers), seed=ns.seed,
+        hx=(hx0, hx1),
+        hy=(hy0, hy1),
+        hz=(hz0, hz1),
+        lattice=ns.lattice,
+        ratio=ns.ratio,
+        extend=ns.extend,
+        unit_extend_ratio=ns.unit_extend_ratio,
+        workers=int(ns.workers),
+        seed=ns.seed,
         voxel_csv=ns.voxel_csv,
         h5_grain_dset=ns.h5_grain_dset,
-        h5_euler_dset=getattr(ns, 'h5_euler_dset', None),
-        h5_numneighbors_dset=getattr(ns, 'h5_numneighbors_dset', None),
-        h5_neighborlist_dset=getattr(ns, 'h5_neighborlist_dset', None),
-        h5_dimensions_dset=getattr(ns, 'h5_dimensions_dset', None),
+        h5_euler_dset=getattr(ns, "h5_euler_dset", None),
+        h5_numneighbors_dset=getattr(ns, "h5_numneighbors_dset", None),
+        h5_neighborlist_dset=getattr(ns, "h5_neighborlist_dset", None),
+        h5_dimensions_dset=getattr(ns, "h5_dimensions_dset", None),
     )
 
     raw_csv = run_dir / "raw_points.csv"
@@ -412,13 +563,19 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
     # 2) polish (OVITO required)
     #    scan_ratio = lattice_constant / cube_ratio; here cube_ratio is --ratio
     scan_ratio = float(ns.lattice_constant) / float(ns.ratio)
-    LOG.info("[polish] lattice_constant=%.6g, cube_ratio=%.6g → scan_ratio=%.6g",
-             ns.lattice_constant, ns.ratio, scan_ratio)
+    LOG.info(
+        "[polish] lattice_constant=%.6g, cube_ratio=%.6g → scan_ratio=%.6g",
+        ns.lattice_constant,
+        ns.ratio,
+        scan_ratio,
+    )
 
     pcfg = PolishConfig(
         scan_ratio=scan_ratio,
         cube_ratio=float(ns.ratio),
-        hx_range=(hx0, hx1), hy_range=(hy0, hy1), hz_range=(hz0, hz1),
+        hx_range=(hx0, hx1),
+        hy_range=(hy0, hy1),
+        hz_range=(hz0, hz1),
         real_extent=bool(ns.extend),  # Auto-enable real_extent when extend is used
         unit_extend_ratio=int(ns.unit_extend_ratio),
         ovito_cutoff=float(ns.ovito_cutoff),
@@ -428,10 +585,10 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
     )
 
     paths = {
-        "tmp_in":     run_dir / "tmp_polish.in.data",
+        "tmp_in": run_dir / "tmp_polish.in.data",
         "ovito_mask": run_dir / "overlap_mask.txt",
-        "ovito_psc":  run_dir / "ovito_cleaned.data",
-        "final_lmp":  run_dir / "final.data",
+        "ovito_psc": run_dir / "ovito_cleaned.data",
+        "final_lmp": run_dir / "final.data",
     }
 
     final_path = polish_pipeline(
@@ -443,6 +600,7 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
 
     LOG.info("All done. final → %s", final_path)
     return 0
+
 
 def doctor_command(ns: argparse.Namespace) -> int:
     """Run doctor command to validate inputs."""
@@ -465,10 +623,10 @@ def doctor_command(ns: argparse.Namespace) -> int:
     frame = None
     # Build mapping with custom dataset names or defaults
     grain_dset = ns.h5_grain_dset or "FeatureIds"
-    euler_dset = getattr(ns, 'h5_euler_dset', None) or "EulerAngles"
-    numneighbors_dset = getattr(ns, 'h5_numneighbors_dset', None) or "NumNeighbors"
-    neighborlist_dset = getattr(ns, 'h5_neighborlist_dset', None) or "NeighborList"
-    dimensions_dset = getattr(ns, 'h5_dimensions_dset', None) or "DIMENSIONS"
+    euler_dset = getattr(ns, "h5_euler_dset", None) or "EulerAngles"
+    numneighbors_dset = getattr(ns, "h5_numneighbors_dset", None) or "NumNeighbors"
+    neighborlist_dset = getattr(ns, "h5_neighborlist_dset", None) or "NeighborList"
+    dimensions_dset = getattr(ns, "h5_dimensions_dset", None) or "DIMENSIONS"
     mapping = {
         "GrainId": grain_dset,
         "Euler": euler_dset,
@@ -489,7 +647,9 @@ def doctor_command(ns: argparse.Namespace) -> int:
     try:
         frame = Frame(str(dream3d_path), mapping=mapping)
         info.append("✓ Successfully loaded HDF5 file")
-        info.append(f"  Volume dimensions: HX=[0,{frame.HX_lim}), HY=[0,{frame.HY_lim}), HZ=[0,{frame.HZ_lim})")
+        info.append(
+            f"  Volume dimensions: HX=[0,{frame.HX_lim}), HY=[0,{frame.HY_lim}), HZ=[0,{frame.HZ_lim})"
+        )
 
         # Check grain IDs
         unique_gids = np.unique(frame.fid)
@@ -523,29 +683,41 @@ def doctor_command(ns: argparse.Namespace) -> int:
             hz0, hz1 = ns.hz
 
             if hx0 < 0 or hx1 > frame.HX_lim:
-                issues.append(f"✗ HX range [{hx0}, {hx1}] is outside volume bounds [0, {frame.HX_lim})")
+                issues.append(
+                    f"✗ HX range [{hx0}, {hx1}] is outside volume bounds [0, {frame.HX_lim})"
+                )
             else:
                 info.append(f"✓ HX range [{hx0}, {hx1}] is within bounds [0, {frame.HX_lim})")
 
             if hy0 < 0 or hy1 > frame.HY_lim:
-                issues.append(f"✗ HY range [{hy0}, {hy1}] is outside volume bounds [0, {frame.HY_lim})")
+                issues.append(
+                    f"✗ HY range [{hy0}, {hy1}] is outside volume bounds [0, {frame.HY_lim})"
+                )
             else:
                 info.append(f"✓ HY range [{hy0}, {hy1}] is within bounds [0, {frame.HY_lim})")
 
             if hz0 < 0 or hz1 > frame.HZ_lim:
-                issues.append(f"✗ HZ range [{hz0}, {hz1}] is outside volume bounds [0, {frame.HZ_lim})")
+                issues.append(
+                    f"✗ HZ range [{hz0}, {hz1}] is outside volume bounds [0, {frame.HZ_lim})"
+                )
             else:
                 info.append(f"✓ HZ range [{hz0}, {hz1}] is within bounds [0, {frame.HZ_lim})")
 
             # Check if grains exist in range
             if not issues:  # Only if ranges are valid
                 try:
-                    gids = frame.find_volume_grain_ID((hx0, hx1), (hy0, hy1), (hz0, hz1), return_count=False)
+                    gids = frame.find_volume_grain_ID(
+                        (hx0, hx1), (hy0, hy1), (hz0, hz1), return_count=False
+                    )
                     positive_gids = gids[gids > 0]
                     if len(positive_gids) > 0:
-                        info.append(f"✓ Found {len(positive_gids)} positive grain IDs in specified H ranges")
+                        info.append(
+                            f"✓ Found {len(positive_gids)} positive grain IDs in specified H ranges"
+                        )
                     else:
-                        warnings.append(f"⚠ No positive grain IDs found in H ranges [{hx0}:{hx1}, {hy0}:{hy1}, {hz0}:{hz1}]")
+                        warnings.append(
+                            f"⚠ No positive grain IDs found in H ranges [{hx0}:{hx1}, {hy0}:{hy1}, {hz0}:{hz1}]"
+                        )
                 except Exception as e:
                     warnings.append(f"⚠ Could not check grains in H ranges: {e}")
         except NameError:
@@ -555,6 +727,7 @@ def doctor_command(ns: argparse.Namespace) -> int:
     if ns.check_ovito:
         try:
             from ovito.io import import_file  # noqa: F401
+
             info.append("✓ OVITO is installed and importable")
         except ImportError:
             issues.append("✗ OVITO is not installed. Install with: pip install ovito")
@@ -598,7 +771,6 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.print_help()
     return 2
 
+
 if __name__ == "__main__":
     sys.exit(main())
-
-

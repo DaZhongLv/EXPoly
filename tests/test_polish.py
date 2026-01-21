@@ -40,9 +40,9 @@ def test_load_raw_points(tmp_dir: Path):
 
     df = _load_raw_points(csv_path)
     assert len(df) == 3
-    assert list(df.columns) == ['X', 'Y', 'Z', 'HX', 'HY', 'HZ', 'margin-ID', 'grain-ID']
-    assert df['X'].iloc[0] == 1.0
-    assert df['grain-ID'].iloc[0] == 1
+    assert list(df.columns) == ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
+    assert df["X"].iloc[0] == 1.0
+    assert df["grain-ID"].iloc[0] == 1
 
 
 def test_write_lammps_input_data(tmp_dir: Path):
@@ -103,6 +103,6 @@ def test_lammps_file_structure(tmp_dir: Path):
     assert any("atom types" in line.lower() for line in lines)
     # Check for box bounds (xlo xhi, ylo yhi, zlo zhi)
     all_text = " ".join(lines).lower()
-    assert ("xlo xhi" in all_text or "xlo" in all_text)
+    assert "xlo xhi" in all_text or "xlo" in all_text
     assert any("Masses" in line for line in lines)
     assert any("Atoms" in line for line in lines)

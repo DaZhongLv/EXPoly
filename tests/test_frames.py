@@ -11,10 +11,10 @@ def test_find_dataset_keys(toy_dream3d_file, tmp_dir):
     """Test HDF5 dataset finding."""
     import h5py
 
-    with h5py.File(toy_dream3d_file, 'r') as f:
-        keys = find_dataset_keys(f, 'FeatureIds', prefer_groups=['CellData'])
+    with h5py.File(toy_dream3d_file, "r") as f:
+        keys = find_dataset_keys(f, "FeatureIds", prefer_groups=["CellData"])
         assert len(keys) > 0
-        assert 'FeatureIds' in keys[-1] or 'featureids' in keys[-1].lower()
+        assert "FeatureIds" in keys[-1] or "featureids" in keys[-1].lower()
 
 
 def test_frame_initialization(frame_instance: Frame):
@@ -37,11 +37,11 @@ def test_frame_grain_id_query(frame_instance: Frame):
     # Test from_ID_to_D
     df = frame_instance.from_ID_to_D(1)
     assert len(df) > 0
-    assert 'HX' in df.columns
-    assert 'HY' in df.columns
-    assert 'HZ' in df.columns
-    assert 'ID' in df.columns
-    assert df['ID'].iloc[0] == 1
+    assert "HX" in df.columns
+    assert "HY" in df.columns
+    assert "HZ" in df.columns
+    assert "ID" in df.columns
+    assert df["ID"].iloc[0] == 1
 
 
 def test_frame_euler_search(frame_instance: Frame):
@@ -54,10 +54,7 @@ def test_frame_euler_search(frame_instance: Frame):
 def test_frame_volume_grain_id(frame_instance: Frame):
     """Test volume grain ID selection."""
     gids = frame_instance.find_volume_grain_ID(
-        HX_range=(0, 10),
-        HY_range=(0, 10),
-        HZ_range=(0, 10),
-        return_count=False
+        HX_range=(0, 10), HY_range=(0, 10), HZ_range=(0, 10), return_count=False
     )
     assert len(gids) > 0
     assert 1 in gids or 0 in gids  # Grain 1 or void

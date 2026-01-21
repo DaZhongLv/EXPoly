@@ -11,8 +11,10 @@ import pandas as pd
 
 # ----------------- Common HDF5 helpers -----------------
 
-def find_dataset_keys(f: hdf.File, target_name: str,
-                      prefer_groups: Optional[List[str]] = None) -> List[str]:
+
+def find_dataset_keys(
+    f: hdf.File, target_name: str, prefer_groups: Optional[List[str]] = None
+) -> List[str]:
     """
     Locate a dataset named `target_name` (case-insensitive) in the HDF5 file `f`.
     Returns the sequence of keys from the root to the dataset, e.g.
@@ -24,8 +26,8 @@ def find_dataset_keys(f: hdf.File, target_name: str,
 
     def visit(name, obj):
         if isinstance(obj, hdf.Dataset):
-            if name.split('/')[-1].lower() == target_name.lower():
-                keys = [k for k in name.split('/') if k]
+            if name.split("/")[-1].lower() == target_name.lower():
+                keys = [k for k in name.split("/") if k]
                 hits.append(keys)
 
     f.visititems(visit)
@@ -47,8 +49,9 @@ def find_dataset_keys(f: hdf.File, target_name: str,
     return hits[0]
 
 
-def assign_fields(f: hdf.File, self_obj, mapping: Dict[str, str],
-                  prefer_groups: Optional[List[str]] = None) -> None:
+def assign_fields(
+    f: hdf.File, self_obj, mapping: Dict[str, str], prefer_groups: Optional[List[str]] = None
+) -> None:
     """
     Read datasets according to a mapping {attribute_name: dataset_basename}
     and assign the array to the corresponding attribute on `self_obj`.
@@ -63,6 +66,7 @@ def assign_fields(f: hdf.File, self_obj, mapping: Dict[str, str],
 
 # ----------------- Small utilities: decouple from general_func -----------------
 
+
 def _unit_vec(base_xyz: np.ndarray, offsets: np.ndarray) -> np.ndarray:
     """
     Equivalent to your legacy `general_func.Unit_vec`:
@@ -75,7 +79,9 @@ def _unit_vec(base_xyz: np.ndarray, offsets: np.ndarray) -> np.ndarray:
     return out + off
 
 
-def _safe_voxel_id(grain_id_arr: np.ndarray, z: np.ndarray, y: np.ndarray, x: np.ndarray) -> np.ndarray:
+def _safe_voxel_id(
+    grain_id_arr: np.ndarray, z: np.ndarray, y: np.ndarray, x: np.ndarray
+) -> np.ndarray:
     """
     Safely fetch voxel grain IDs, supporting both 3D and 4D arrays.
     If 4D, the last axis is assumed to be size-1 and index 0 is used.
@@ -89,6 +95,7 @@ def _safe_voxel_id(grain_id_arr: np.ndarray, z: np.ndarray, y: np.ndarray, x: np
 
 
 # ----------------- Frame object -----------------
+
 
 @dataclass
 class Frame:
@@ -203,10 +210,10 @@ class Frame:
         although the index array is produced in the order [Z, Y, X].
         """
         idx = np.argwhere(self.GrainId == Grain_ID)  # 3 or 4 columns
-        df = pd.DataFrame(idx[:, :3], columns=['HZ', 'HY', 'HX'])
-        df['ID'] = int(Grain_ID)
-        df = df.sort_values(by=['HZ', 'HY', 'HX'], ignore_index=True)
-        return df.astype({'HZ': 'int32', 'HY': 'int32', 'HX': 'int32', 'ID': 'int32'})
+        df = pd.DataFrame(idx[:, :3], columns=["HZ", "HY", "HX"])
+        df["ID"] = int(Grain_ID)
+        df = df.sort_values(by=["HZ", "HY", "HX"], ignore_index=True)
+        return df.astype({"HZ": "int32", "HY": "int32", "HX": "int32", "ID": "int32"})
 
     def get_grain_size(self, Grain_ID: int) -> int:
         return int((self.fid == Grain_ID).sum())
@@ -216,10 +223,13 @@ class Frame:
         return pd.concat(parts, ignore_index=True)
 
     # ---------- Voxel/volume queries ----------
-    def find_volume_grain_ID(self, HX_range: Tuple[int, int],
-                             HY_range: Tuple[int, int],
-                             HZ_range: Tuple[int, int],
-                             return_count: bool = False):
+    def find_volume_grain_ID(
+        self,
+        HX_range: Tuple[int, int],
+        HY_range: Tuple[int, int],
+        HZ_range: Tuple[int, int],
+        return_count: bool = False,
+    ):
         """
         Vectorized crop by H ranges and return unique grain IDs inside.
         If `return_count=True`, also return the counts per grain ID.
@@ -250,7 +260,7 @@ class Frame:
         Returned offsets are divided by `copy_size`.
         """
         scale = (copy_size - 1) / 2
-        x, y, z = np.mgrid[-scale:scale + 1, -scale:scale + 1, -scale:scale + 1]
+        x, y, z = np.mgrid[-scale : scale + 1, -scale : scale + 1, -scale : scale + 1]
         pos = np.vstack((x.ravel(), y.ravel(), z.ravel())).T
         return pos / copy_size
 
@@ -265,7 +275,7 @@ class Frame:
             scale = (copy_size / 2) - 1
         else:
             scale = (copy_size - 1) / 2
-        x, y, z = np.mgrid[-scale - 1:scale + 2, -scale - 1:scale + 2, -scale - 1:scale + 2]
+        x, y, z = np.mgrid[-scale - 1 : scale + 2, -scale - 1 : scale + 2, -scale - 1 : scale + 2]
         pos = np.vstack((x.ravel(), y.ravel(), z.ravel())).T
         return pos / copy_size
 
@@ -281,7 +291,7 @@ class Frame:
         Extend_Out_XYZ = Extend_Out[:, [0, 1, 2]]
         Extend_Out_result = Extend_Out_XYZ + Extend_Unit
         Extend_Out_info = np.hstack((Extend_Out_result, Extend_Out[:, [3, 4]]))
-        return pd.DataFrame(Extend_Out_info, columns=['HZ', 'HY', 'HX', 'margin-ID', 'grain-ID'])
+        return pd.DataFrame(Extend_Out_info, columns=["HZ", "HY", "HX", "margin-ID", "grain-ID"])
 
     def Search_Out_data(self, Out_df: pd.DataFrame, unit_search_ratio: int) -> np.ndarray:
         """
@@ -290,7 +300,7 @@ class Frame:
         each voxel with offsets from `generate_search_cube(unit_search_ratio)`.
         """
         Unit_cube = self.generate_search_cube(unit_search_ratio)
-        Out_XYZ = Out_df[['HX', 'HY', 'HZ']].to_numpy()
+        Out_XYZ = Out_df[["HX", "HY", "HZ"]].to_numpy()
         Extend_Out = np.repeat(Out_XYZ, len(Unit_cube), axis=0)
         Extend_Unit = np.tile(Unit_cube, (len(Out_XYZ), 1))
         return Extend_Out + Extend_Unit
@@ -303,142 +313,179 @@ class Frame:
         """
         # Neighborhood offsets
         if not with_diagonal:
-            Unit_cube = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1],
-                                  [-1, 0, 0], [0, -1, 0], [0, 0, -1]])
+            Unit_cube = np.array(
+                [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [-1, 0, 0], [0, -1, 0], [0, 0, -1]]
+            )
             Unit_cube_no_origin = Unit_cube[1:]
         else:
-            Unit_cube = np.array([
-                [0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [-1, 0, 0], [0, -1, 0], [0, 0, -1],
-                [1, 1, 0], [1, -1, 0], [-1, 1, 0], [-1, -1, 0],
-                [1, 0, 1], [1, 0, -1], [-1, 0, 1], [-1, 0, -1],
-                [0, 1, 1], [0, 1, -1], [0, -1, 1], [0, -1, -1],
-                [1, 1, 1], [1, -1, 1], [-1, 1, 1], [1, 1, -1],
-                [-1, -1, 1], [-1, 1, -1], [1, -1, -1], [-1, -1, -1],
-            ])
+            Unit_cube = np.array(
+                [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1],
+                    [-1, 0, 0],
+                    [0, -1, 0],
+                    [0, 0, -1],
+                    [1, 1, 0],
+                    [1, -1, 0],
+                    [-1, 1, 0],
+                    [-1, -1, 0],
+                    [1, 0, 1],
+                    [1, 0, -1],
+                    [-1, 0, 1],
+                    [-1, 0, -1],
+                    [0, 1, 1],
+                    [0, 1, -1],
+                    [0, -1, 1],
+                    [0, -1, -1],
+                    [1, 1, 1],
+                    [1, -1, 1],
+                    [-1, 1, 1],
+                    [1, 1, -1],
+                    [-1, -1, 1],
+                    [-1, 1, -1],
+                    [1, -1, -1],
+                    [-1, -1, -1],
+                ]
+            )
             Unit_cube_no_origin = Unit_cube[1:]
 
         Out = self.from_ID_to_D(grain_ID)
-        Out_XYZ = Out[['HZ', 'HY', 'HX']].to_numpy()
+        Out_XYZ = Out[["HZ", "HY", "HX"]].to_numpy()
 
         # Expand by one layer and mark contour
         Cube_out = _unit_vec(Out_XYZ, Unit_cube)
-        Cube_out_df = pd.DataFrame(np.unique(Cube_out, axis=0), columns=['HZ', 'HY', 'HX'])
+        Cube_out_df = pd.DataFrame(np.unique(Cube_out, axis=0), columns=["HZ", "HY", "HX"])
 
-        df_all = Cube_out_df.merge(Out[['HZ', 'HY', 'HX']], on=['HZ', 'HY', 'HX'],
-                                   how='left', indicator=True)
+        df_all = Cube_out_df.merge(
+            Out[["HZ", "HY", "HX"]], on=["HZ", "HY", "HX"], how="left", indicator=True
+        )
         # 1 = outer shell, 0 = interior
-        df_all['vertice'] = df_all['_merge'].map({'both': 0, 'left_only': 1}).astype(int)
-        df_all = df_all.drop(columns=['_merge'])
+        df_all["vertice"] = df_all["_merge"].map({"both": 0, "left_only": 1}).astype(int)
+        df_all = df_all.drop(columns=["_merge"])
 
-        other_grain_XYZ = df_all[df_all['vertice'] == 1][['HZ', 'HY', 'HX']]
-        this_grain_XYZ = df_all[df_all['vertice'] == 0][['HZ', 'HY', 'HX']]
+        other_grain_XYZ = df_all[df_all["vertice"] == 1][["HZ", "HY", "HX"]]
+        this_grain_XYZ = df_all[df_all["vertice"] == 0][["HZ", "HY", "HX"]]
 
         other_grain_cube = _unit_vec(other_grain_XYZ.to_numpy(), Unit_cube_no_origin)
-        Other_grain_cube = pd.DataFrame(np.unique(other_grain_cube, axis=0),
-                                        columns=['HZ', 'HY', 'HX'])
+        Other_grain_cube = pd.DataFrame(
+            np.unique(other_grain_cube, axis=0), columns=["HZ", "HY", "HX"]
+        )
 
-        inner_margin = Other_grain_cube.merge(this_grain_XYZ, on=['HZ', 'HY', 'HX'], how='inner')
+        inner_margin = Other_grain_cube.merge(this_grain_XYZ, on=["HZ", "HY", "HX"], how="inner")
 
-        df_with_margin = inner_margin.merge(df_all, on=['HZ', 'HY', 'HX'],
-                                            how='right', indicator=True)
+        df_with_margin = inner_margin.merge(
+            df_all, on=["HZ", "HY", "HX"], how="right", indicator=True
+        )
         # 2 = inner shell, 1 = outer shell, 0 = non-boundary
-        df_with_margin['margin'] = df_with_margin['_merge'].map({'both': 2, 'right_only': 0}).astype(int)
-        df_with_margin['margin-ID'] = (df_with_margin['margin'] + df_with_margin['vertice']).astype(int)
-        df_with_margin = df_with_margin.drop(columns=['_merge', 'margin', 'vertice'])
+        df_with_margin["margin"] = (
+            df_with_margin["_merge"].map({"both": 2, "right_only": 0}).astype(int)
+        )
+        df_with_margin["margin-ID"] = (df_with_margin["margin"] + df_with_margin["vertice"]).astype(
+            int
+        )
+        df_with_margin = df_with_margin.drop(columns=["_merge", "margin", "vertice"])
 
         # Clip to volume bounds
         m = (
-            (df_with_margin['HX'] >= 0) & (df_with_margin['HY'] >= 0) & (df_with_margin['HZ'] >= 0) &
-            (df_with_margin['HX'] < self.HX_lim) &
-            (df_with_margin['HY'] < self.HY_lim) &
-            (df_with_margin['HZ'] < self.HZ_lim)
+            (df_with_margin["HX"] >= 0)
+            & (df_with_margin["HY"] >= 0)
+            & (df_with_margin["HZ"] >= 0)
+            & (df_with_margin["HX"] < self.HX_lim)
+            & (df_with_margin["HY"] < self.HY_lim)
+            & (df_with_margin["HZ"] < self.HZ_lim)
         )
         df_with_margin = df_with_margin[m]
 
         # Assign grain-ID by margin-ID:
         #   margin==0 → this grain
         #   margin==1/2 → fetch real neighbor id from GrainId volume
-        z = df_with_margin['HZ'].to_numpy(dtype=int)
-        y = df_with_margin['HY'].to_numpy(dtype=int)
-        x = df_with_margin['HX'].to_numpy(dtype=int)
+        z = df_with_margin["HZ"].to_numpy(dtype=int)
+        y = df_with_margin["HY"].to_numpy(dtype=int)
+        x = df_with_margin["HX"].to_numpy(dtype=int)
         neighbor_ids = _safe_voxel_id(self.GrainId, z, y, x).astype(int)
 
-        margin = df_with_margin['margin-ID'].to_numpy(dtype=int)
-        df_with_margin['grain-ID'] = np.where(margin == 0, int(grain_ID), neighbor_ids)
+        margin = df_with_margin["margin-ID"].to_numpy(dtype=int)
+        df_with_margin["grain-ID"] = np.where(margin == 0, int(grain_ID), neighbor_ids)
 
-        return df_with_margin[['HZ', 'HY', 'HX', 'margin-ID', 'grain-ID']]
+        return df_with_margin[["HZ", "HY", "HX", "margin-ID", "grain-ID"]]
 
-    def renew_outer_margin_ID(self, Extend_Out_: pd.DataFrame, unit_search_ratio: int, extend_ID: bool = False) -> pd.DataFrame:
+    def renew_outer_margin_ID(
+        self, Extend_Out_: pd.DataFrame, unit_search_ratio: int, extend_ID: bool = False
+    ) -> pd.DataFrame:
         """
         Recompute outer margin-ID by performing a local neighborhood vote with a
         search cube of size `unit_search_ratio`.
         If `extend_ID=True`, write the result to column 'extend-ID' instead of 'margin-ID'.
         """
         Extend_Out_df = Extend_Out_.copy()
-        Extend_Out_M1 = Extend_Out_df[Extend_Out_df['margin-ID'] == 1].copy()
+        Extend_Out_M1 = Extend_Out_df[Extend_Out_df["margin-ID"] == 1].copy()
         Search_XYZ = self.Search_Out_data(Extend_Out_M1, unit_search_ratio)
-        Search_XYZ_df = pd.DataFrame(Search_XYZ, columns=['HX', 'HY', 'HZ'])
+        Search_XYZ_df = pd.DataFrame(Search_XYZ, columns=["HX", "HY", "HZ"])
 
         # Normalize, scale, and round to 2 decimals to match grid cells robustly
         for df in (Extend_Out_df, Search_XYZ_df):
-            df['HX'] *= unit_search_ratio
-            df['HY'] *= unit_search_ratio
-            df['HZ'] *= unit_search_ratio
-            df[['HX', 'HY', 'HZ']] = df[['HX', 'HY', 'HZ']].round(2)
+            df["HX"] *= unit_search_ratio
+            df["HY"] *= unit_search_ratio
+            df["HZ"] *= unit_search_ratio
+            df[["HX", "HY", "HZ"]] = df[["HX", "HY", "HZ"]].round(2)
 
-        try_merge = Search_XYZ_df.merge(Extend_Out_df, how='left', on=['HX', 'HY', 'HZ']).fillna(1)
+        try_merge = Search_XYZ_df.merge(Extend_Out_df, how="left", on=["HX", "HY", "HZ"]).fillna(1)
 
         number_on_length = unit_search_ratio + (1 if unit_search_ratio % 2 == 0 else 2)
-        number_in_cube = number_on_length ** 3
+        number_in_cube = number_on_length**3
         group_ids = np.arange(len(try_merge)) // number_in_cube
-        margin_id_array = try_merge['margin-ID'].to_numpy(dtype=float)
+        margin_id_array = try_merge["margin-ID"].to_numpy(dtype=float)
         mask = (margin_id_array != 1).astype(int)
         extend_ID_count = np.bincount(group_ids, weights=mask)
 
-        Extend_Out_M1_new = Extend_Out_[Extend_Out_['margin-ID'] == 1].copy()
+        Extend_Out_M1_new = Extend_Out_[Extend_Out_["margin-ID"] == 1].copy()
         threshold = (number_in_cube + 1) / 2
         if not extend_ID:
             rewrite_ID_count = np.where(extend_ID_count >= threshold, 2, 1)
-            Extend_Out_M1_new['margin-ID'] = rewrite_ID_count
+            Extend_Out_M1_new["margin-ID"] = rewrite_ID_count
         else:
             extend_ID_count = np.where(extend_ID_count >= threshold, 3, 5)
-            Extend_Out_M1_new['extend-ID'] = extend_ID_count
+            Extend_Out_M1_new["extend-ID"] = extend_ID_count
 
         return Extend_Out_M1_new
 
-    def renew_inner_margin_ID(self, Extend_Out_: pd.DataFrame, unit_search_ratio: int, extend_ID: bool = False) -> pd.DataFrame:
+    def renew_inner_margin_ID(
+        self, Extend_Out_: pd.DataFrame, unit_search_ratio: int, extend_ID: bool = False
+    ) -> pd.DataFrame:
         """
         Recompute inner margin-ID using the same neighborhood voting scheme as outer margin.
         If `extend_ID=True`, write the result to 'extend-ID'.
         """
         Extend_Out_df = Extend_Out_.copy()
-        Extend_Out_M2 = Extend_Out_df[Extend_Out_df['margin-ID'] == 2].copy()
+        Extend_Out_M2 = Extend_Out_df[Extend_Out_df["margin-ID"] == 2].copy()
         Search_XYZ = self.Search_Out_data(Extend_Out_M2, unit_search_ratio)
-        Search_XYZ_df = pd.DataFrame(Search_XYZ, columns=['HX', 'HY', 'HZ'])
+        Search_XYZ_df = pd.DataFrame(Search_XYZ, columns=["HX", "HY", "HZ"])
 
         for df in (Extend_Out_df, Search_XYZ_df):
-            df['HX'] *= unit_search_ratio
-            df['HY'] *= unit_search_ratio
-            df['HZ'] *= unit_search_ratio
-            df[['HX', 'HY', 'HZ']] = df[['HX', 'HY', 'HZ']].round(2)
+            df["HX"] *= unit_search_ratio
+            df["HY"] *= unit_search_ratio
+            df["HZ"] *= unit_search_ratio
+            df[["HX", "HY", "HZ"]] = df[["HX", "HY", "HZ"]].round(2)
 
-        try_merge = Search_XYZ_df.merge(Extend_Out_df, how='left', on=['HX', 'HY', 'HZ']).fillna(1)
+        try_merge = Search_XYZ_df.merge(Extend_Out_df, how="left", on=["HX", "HY", "HZ"]).fillna(1)
 
         number_on_length = unit_search_ratio + (1 if unit_search_ratio % 2 == 0 else 2)
-        number_in_cube = number_on_length ** 3
+        number_in_cube = number_on_length**3
         group_ids = np.arange(len(try_merge)) // number_in_cube
-        margin_id_array = try_merge['margin-ID'].to_numpy(dtype=float)
+        margin_id_array = try_merge["margin-ID"].to_numpy(dtype=float)
         mask = (margin_id_array != 1).astype(int)
         extend_ID_count = np.bincount(group_ids, weights=mask)
 
-        Extend_Out_M2_new = Extend_Out_[Extend_Out_['margin-ID'] == 2].copy()
+        Extend_Out_M2_new = Extend_Out_[Extend_Out_["margin-ID"] == 2].copy()
         threshold = (number_in_cube + 1) / 2
         if not extend_ID:
             rewrite_ID_count = np.where(extend_ID_count >= threshold, 2, 1)
-            Extend_Out_M2_new['margin-ID'] = rewrite_ID_count
+            Extend_Out_M2_new["margin-ID"] = rewrite_ID_count
         else:
             extend_ID_count = np.where(extend_ID_count >= threshold, 3, 5)
-            Extend_Out_M2_new['extend-ID'] = extend_ID_count
+            Extend_Out_M2_new["extend-ID"] = extend_ID_count
 
         return Extend_Out_M2_new
 
@@ -451,32 +498,36 @@ class Frame:
         Extend_Out_ = self.Extent_Out_data(Out_.to_numpy(), unit_extend_ratio)
         New_M1 = self.renew_outer_margin_ID(Extend_Out_, unit_extend_ratio)
         New_M2 = self.renew_inner_margin_ID(Extend_Out_, unit_extend_ratio)
-        Old_M0 = Extend_Out_[Extend_Out_['margin-ID'] == 0]
+        Old_M0 = Extend_Out_[Extend_Out_["margin-ID"] == 0]
         New_Extend = pd.concat([New_M1, New_M2, Old_M0], ignore_index=True)
-        for ax in ('HX', 'HY', 'HZ'):
+        for ax in ("HX", "HY", "HZ"):
             New_Extend[ax] *= unit_extend_ratio
-        New_Extend[['HX', 'HY', 'HZ']] = New_Extend[['HX', 'HY', 'HZ']].round().astype(int)
-        return New_Extend[['HZ', 'HY', 'HX', 'margin-ID', 'grain-ID']]
+        New_Extend[["HX", "HY", "HZ"]] = New_Extend[["HX", "HY", "HZ"]].round().astype(int)
+        return New_Extend[["HZ", "HY", "HX", "margin-ID", "grain-ID"]]
 
     def renew_outer_margin(self, New_Extend: pd.DataFrame) -> pd.DataFrame:
         """
         Reconstruct the outer margin (margin-ID=1) based on the extended set `New_Extend`.
         Returns an integer-typed DataFrame with updated margins.
         """
-        Grain_inner = New_Extend[New_Extend['margin-ID'] != 1]
-        Grain_XYZ = Grain_inner[['HZ', 'HY', 'HX']].to_numpy()
-        Unit_cube = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1],
-                              [-1, 0, 0], [0, -1, 0], [0, 0, -1]])
+        Grain_inner = New_Extend[New_Extend["margin-ID"] != 1]
+        Grain_XYZ = Grain_inner[["HZ", "HY", "HX"]].to_numpy()
+        Unit_cube = np.array(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [-1, 0, 0], [0, -1, 0], [0, 0, -1]]
+        )
         Cube_out = _unit_vec(Grain_XYZ, Unit_cube)
-        Cube_out_df = pd.DataFrame(np.unique(Cube_out, axis=0), columns=['HZ', 'HY', 'HX'])
-        Grain_wOut = Cube_out_df.merge(Grain_inner[['HZ', 'HY', 'HX']], on=['HZ', 'HY', 'HX'], how='left', indicator=True)
-        Grain_wOut['margin-ID'] = Grain_wOut['_merge'].map({'both': 0, 'left_only': 1}).astype(int)
-        Grain_wOut = Grain_wOut.drop(columns=['_merge'])
-        Outer_voxel = Grain_wOut[Grain_wOut['margin-ID'] == 1]
-        New_outer_margin = Outer_voxel.merge(New_Extend, on=['HZ', 'HY', 'HX', 'margin-ID'], how='left').dropna()
+        Cube_out_df = pd.DataFrame(np.unique(Cube_out, axis=0), columns=["HZ", "HY", "HX"])
+        Grain_wOut = Cube_out_df.merge(
+            Grain_inner[["HZ", "HY", "HX"]], on=["HZ", "HY", "HX"], how="left", indicator=True
+        )
+        Grain_wOut["margin-ID"] = Grain_wOut["_merge"].map({"both": 0, "left_only": 1}).astype(int)
+        Grain_wOut = Grain_wOut.drop(columns=["_merge"])
+        Outer_voxel = Grain_wOut[Grain_wOut["margin-ID"] == 1]
+        New_outer_margin = Outer_voxel.merge(
+            New_Extend, on=["HZ", "HY", "HX", "margin-ID"], how="left"
+        ).dropna()
         out_df = pd.concat([Grain_inner, New_outer_margin], ignore_index=True)
         return out_df.round().astype(int)
-
 
 
 @dataclass
@@ -504,8 +555,8 @@ class VoxelCSVFrame(Frame):
     h5_grain_dset: str = "GrainID"
 
     # Record origin and step size used for H coordinate normalization (optional, for future use)
-    H_origin: np.ndarray | None = None   # [x0, y0, z0]
-    H_step: np.ndarray | None = None     # [dx, dy, dz]
+    H_origin: np.ndarray | None = None  # [x0, y0, z0]
+    H_step: np.ndarray | None = None  # [dx, dy, dz]
 
     _h5_frame: Frame | None = None
     _grain_euler_map: Dict[int, np.ndarray] | None = None
@@ -554,7 +605,7 @@ class VoxelCSVFrame(Frame):
         # ---------- 2. Read voxel-CSV and normalize coordinates to continuous indices ----------
         df = pd.read_csv(
             csv_path,
-            delim_whitespace=True,     # Key: space / any whitespace separator
+            delim_whitespace=True,  # Key: space / any whitespace separator
             comment="#",
             engine="python",
         )
@@ -605,7 +656,7 @@ class VoxelCSVFrame(Frame):
         # ---------- 3. Expand Euler grid ----------
         euler_grid = np.zeros((hz_lim, hy_lim, hx_lim, 3), dtype=float)
         for gid, eul in grain_euler_map.items():
-            mask = (grid == gid)
+            mask = grid == gid
             if not np.any(mask):
                 continue
             euler_grid[mask] = eul
@@ -626,5 +677,3 @@ class VoxelCSVFrame(Frame):
             return self._grain_euler_map[gid]
         except KeyError as e:
             raise ValueError(f"grain_id={gid} not found in HDF5 orientation map.") from e
-
-

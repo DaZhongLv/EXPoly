@@ -30,6 +30,7 @@ logger = logging.getLogger("voxelize_dump")
 
 # ------------------------------ Config ----------------------------------------
 
+
 @dataclass
 class VoxelizeConfig:
     dump_path: Path
@@ -51,7 +52,10 @@ class VoxelizeConfig:
 
 # ------------------------------ I/O helpers -----------------------------------
 
-def _read_dump_header(dump_path: Path) -> Tuple[int, int, Tuple[float, float], Tuple[float, float], Tuple[float, float], List[str]]:
+
+def _read_dump_header(
+    dump_path: Path,
+) -> Tuple[int, int, Tuple[float, float], Tuple[float, float], Tuple[float, float], List[str]]:
     """
     Parse a single-timestep LAMMPS dump file to obtain:
       - atoms_header_line (0-based line index of 'ITEM: ATOMS ...')
@@ -104,7 +108,9 @@ def _read_dump_header(dump_path: Path) -> Tuple[int, int, Tuple[float, float], T
     return atoms_header_line, n_atoms, (xlo, xhi), (ylo, yhi), (zlo, zhi), atoms_columns
 
 
-def _load_atoms_table(dump_path: Path, header_line: int, n_atoms: int, cols: List[str]) -> pd.DataFrame:
+def _load_atoms_table(
+    dump_path: Path, header_line: int, n_atoms: int, cols: List[str]
+) -> pd.DataFrame:
     """
     Read the atoms table using pandas, skipping to the line after 'ITEM: ATOMS'.
     """
@@ -124,25 +130,28 @@ def _load_atoms_table(dump_path: Path, header_line: int, n_atoms: int, cols: Lis
 
 # ------------------------------ Grid generation --------------------------------
 
+
 def _ceil_to_multiple(x: float, step: float) -> float:
     return float(np.ceil(x / step) * step)
 
 
-def _generate_voxel_grid(xlo: float, xhi: float,
-                         ylo: float, yhi: float,
-                         zlo: float, zhi: float,
-                         cube_ratio: float) -> np.ndarray:
+def _generate_voxel_grid(
+    xlo: float, xhi: float, ylo: float, yhi: float, zlo: float, zhi: float, cube_ratio: float
+) -> np.ndarray:
     """
     Build regular voxel grid covering [0, S_max] in each dimension, where:
       S_max = ceil((domain_max - domain_min) / cube_ratio) * cube_ratio
     Then shift grid to start at 0 (we later store voxel coords after subtracting S_min).
     """
     S_min = np.array([0.0, 0.0, 0.0], dtype=float)
-    S_max = np.array([
-        _ceil_to_multiple(xhi - xlo, cube_ratio),
-        _ceil_to_multiple(yhi - ylo, cube_ratio),
-        _ceil_to_multiple(zhi - zlo, cube_ratio),
-    ], dtype=float)
+    S_max = np.array(
+        [
+            _ceil_to_multiple(xhi - xlo, cube_ratio),
+            _ceil_to_multiple(yhi - ylo, cube_ratio),
+            _ceil_to_multiple(zhi - zlo, cube_ratio),
+        ],
+        dtype=float,
+    )
 
     x_bins = np.linspace(S_min[0], S_max[0], int(1 + (S_max[0] - S_min[0]) / cube_ratio))
     y_bins = np.linspace(S_min[1], S_max[1], int(1 + (S_max[1] - S_min[1]) / cube_ratio))
@@ -150,12 +159,12 @@ def _generate_voxel_grid(xlo: float, xhi: float,
 
     X, Y = np.meshgrid(x_bins, y_bins, indexing="xy")
     XY = np.stack([X.ravel(), Y.ravel()], axis=1)
-    XYZ = np.hstack([np.tile(XY, (len(z_bins), 1)),
-                     np.repeat(z_bins, len(XY))[:, None]])
+    XYZ = np.hstack([np.tile(XY, (len(z_bins), 1)), np.repeat(z_bins, len(XY))[:, None]])
     return XYZ  # shape: (Nx*Ny*Nz, 3)
 
 
 # ------------------------------ Column helpers ---------------------------------
+
 
 def _ensure_columns(df: pd.DataFrame, cfg: VoxelizeConfig) -> Dict[str, str]:
     """
@@ -175,8 +184,10 @@ def _ensure_columns(df: pd.DataFrame, cfg: VoxelizeConfig) -> Dict[str, str]:
             missing.append(opt)
 
     if missing:
-        logger.warning("Missing optional columns: %s. They will be filled with zeros (or ids for grain if absent).",
-                       ", ".join(missing))
+        logger.warning(
+            "Missing optional columns: %s. They will be filled with zeros (or ids for grain if absent).",
+            ", ".join(missing),
+        )
         # Create zero-filled columns for missing optionals
         for opt in missing:
             if opt == cfg.col_grain:
@@ -200,9 +211,10 @@ def _ensure_columns(df: pd.DataFrame, cfg: VoxelizeConfig) -> Dict[str, str]:
 
 # ------------------------------ Core projection --------------------------------
 
-def project_voxels(df_atoms: pd.DataFrame,
-                   colmap: Dict[str, str],
-                   grid_xyz: np.ndarray) -> Tuple[pd.DataFrame, pd.Series]:
+
+def project_voxels(
+    df_atoms: pd.DataFrame, colmap: Dict[str, str], grid_xyz: np.ndarray
+) -> Tuple[pd.DataFrame, pd.Series]:
     """
     Unconditional nearest-neighbor assignment from voxel centers to atoms.
     Returns:
@@ -218,23 +230,45 @@ def project_voxels(df_atoms: pd.DataFrame,
     _, idx = tree.query(grid_xyz, k=1, workers=-1)
 
     # Select required per-voxel attributes from the matched atoms
-    take_cols = [colmap["id"], colmap["qw"], colmap["qx"], colmap["qy"], colmap["qz"], colmap["grain"]]
+    take_cols = [
+        colmap["id"],
+        colmap["qw"],
+        colmap["qx"],
+        colmap["qy"],
+        colmap["qz"],
+        colmap["grain"],
+    ]
     picked = df_atoms.iloc[idx][take_cols].reset_index(drop=True).to_numpy()
 
     # Compose output table
-    phase_ci = np.ones((len(grid_xyz), 2), dtype=float)  # phase=1, CI=1 (or whatever constant you prefer)
+    phase_ci = np.ones(
+        (len(grid_xyz), 2), dtype=float
+    )  # phase=1, CI=1 (or whatever constant you prefer)
     out = np.hstack([picked, grid_xyz, phase_ci])
 
-    characterize = pd.DataFrame(out, columns=[
-        'atom-ID', 'ptm-qw', 'ptm-qx', 'ptm-qy', 'ptm-qz',
-        'grain-ID', 'voxel-X', 'voxel-Y', 'voxel-Z', 'phase', 'CI'
-    ])
-    original_id = characterize['atom-ID'].astype(int)
+    characterize = pd.DataFrame(
+        out,
+        columns=[
+            "atom-ID",
+            "ptm-qw",
+            "ptm-qx",
+            "ptm-qy",
+            "ptm-qz",
+            "grain-ID",
+            "voxel-X",
+            "voxel-Y",
+            "voxel-Z",
+            "phase",
+            "CI",
+        ],
+    )
+    original_id = characterize["atom-ID"].astype(int)
 
     return characterize, original_id
 
 
 # ------------------------------ Naming & saving --------------------------------
+
 
 def _make_output_paths(dump_path: Path, out_dir: Optional[Path]) -> Tuple[Path, Path]:
     """
@@ -242,7 +276,7 @@ def _make_output_paths(dump_path: Path, out_dir: Optional[Path]) -> Tuple[Path, 
       <dump_dir or out_dir>/D3D_project/Characterize_<dumpname>.<ext>
       <dump_dir or out_dir>/D3D_project/Original_ID_<dumpname>.<ext>
     """
-    base_dir = (out_dir or dump_path.parent)
+    base_dir = out_dir or dump_path.parent
     d3d_dir = base_dir / "D3D_project"
     d3d_dir.mkdir(parents=True, exist_ok=True)
 
@@ -258,7 +292,9 @@ def _make_output_paths(dump_path: Path, out_dir: Optional[Path]) -> Tuple[Path, 
     return d3d_dir / char_name, d3d_dir / id_name
 
 
-def save_outputs(characterize: pd.DataFrame, original_id: pd.Series, char_path: Path, id_path: Path) -> None:
+def save_outputs(
+    characterize: pd.DataFrame, original_id: pd.Series, char_path: Path, id_path: Path
+) -> None:
     # Shift voxel coordinates to start at 0 (already generated from 0..Smax, so this is NOP)
     # Kept for compatibility with older scripts that subtract S_min.
     for c in ("voxel-X", "voxel-Y", "voxel-Z"):
@@ -272,14 +308,22 @@ def save_outputs(characterize: pd.DataFrame, original_id: pd.Series, char_path: 
 
 # ------------------------------ CLI -------------------------------------------
 
+
 def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Voxelize an atomic structure (LAMMPS dump → regular voxel grid via NN projection). No cutoff.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--dump", required=True, help="Path to LAMMPS dump (single timestep).")
-    p.add_argument("--cube-ratio", required=True, type=float, help="Voxel pitch (same units as dump coordinates).")
-    p.add_argument("--out-dir", default=None, help="Override output base directory (default: dump directory).")
+    p.add_argument(
+        "--cube-ratio",
+        required=True,
+        type=float,
+        help="Voxel pitch (same units as dump coordinates).",
+    )
+    p.add_argument(
+        "--out-dir", default=None, help="Override output base directory (default: dump directory)."
+    )
 
     # Column mapping (only change if your dump uses different names)
     p.add_argument("--col-id", default="id", help="Atom id column name in dump.")
@@ -290,7 +334,11 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--col-qx", default="quati", help="Quaternion x column name in dump.")
     p.add_argument("--col-qy", default="quatj", help="Quaternion y column name in dump.")
     p.add_argument("--col-qz", default="quatk", help="Quaternion z column name in dump.")
-    p.add_argument("--col-grain", default="Grain", help="Grain id column name in dump (if absent will be zeros).")
+    p.add_argument(
+        "--col-grain",
+        default="Grain",
+        help="Grain id column name in dump (if absent will be zeros).",
+    )
 
     p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p
@@ -305,18 +353,33 @@ def main() -> int:
         cube_ratio=float(ns.cube_ratio),
         out_dir=(None if ns.out_dir is None else Path(ns.out_dir).expanduser().resolve()),
         log_level=str(ns.log_level).upper(),
-        col_id=ns.col_id, col_x=ns.col_x, col_y=ns.col_y, col_z=ns.col_z,
-        col_qw=ns.col_qw, col_qx=ns.col_qx, col_qy=ns.col_qy, col_qz=ns.col_qz,
+        col_id=ns.col_id,
+        col_x=ns.col_x,
+        col_y=ns.col_y,
+        col_z=ns.col_z,
+        col_qw=ns.col_qw,
+        col_qx=ns.col_qx,
+        col_qy=ns.col_qy,
+        col_qz=ns.col_qz,
         col_grain=ns.col_grain,
     )
 
-    logging.basicConfig(level=getattr(logging, cfg.log_level, logging.INFO),
-                        format="%(levelname)s | %(message)s")
+    logging.basicConfig(
+        level=getattr(logging, cfg.log_level, logging.INFO), format="%(levelname)s | %(message)s"
+    )
 
     # 1) Parse header & atoms table
     hdr_line, n_atoms, (xlo, xhi), (ylo, yhi), (zlo, zhi), cols = _read_dump_header(cfg.dump_path)
-    logger.info("Parsed dump: n_atoms=%d; box=[%.6g..%.6g, %.6g..%.6g, %.6g..%.6g]",
-                n_atoms, xlo, xhi, ylo, yhi, zlo, zhi)
+    logger.info(
+        "Parsed dump: n_atoms=%d; box=[%.6g..%.6g, %.6g..%.6g, %.6g..%.6g]",
+        n_atoms,
+        xlo,
+        xhi,
+        ylo,
+        yhi,
+        zlo,
+        zhi,
+    )
     atoms = _load_atoms_table(cfg.dump_path, hdr_line, n_atoms, cols)
 
     # 2) Column mapping / synthesize missing optionals
@@ -339,4 +402,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

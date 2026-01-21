@@ -26,6 +26,7 @@ PathLike = Union[str, Path]
 # Config
 # -----------------------------------------------------------------------------
 
+
 @dataclass
 class PolishConfig:
     """
@@ -37,6 +38,7 @@ class PolishConfig:
     Ranges are H-space (HX/HY/HZ). After cropping, (X,Y,Z) are shifted to the
     [H_low,*] origin and multiplied by scan_ratio.
     """
+
     scan_ratio: float = 1.0
     cube_ratio: float = 1.5
 
@@ -69,6 +71,7 @@ class PolishConfig:
 # Utils
 # -----------------------------------------------------------------------------
 
+
 def _ensure_parent(path: PathLike, overwrite: bool = True) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -84,9 +87,9 @@ def _load_raw_points(raw_csv: PathLike) -> pd.DataFrame:
     Force numeric & drop invalid rows to avoid dtype issues.
     """
     df = pd.read_csv(raw_csv, header=None, sep=r"\s+", low_memory=False)
-    df.columns = ['X', 'Y', 'Z', 'HX', 'HY', 'HZ', 'margin-ID', 'grain-ID']
+    df.columns = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
     for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+        df[col] = pd.to_numeric(df[col], errors="coerce")
     before = len(df)
     df = df.dropna().reset_index(drop=True)
     if len(df) < before:
@@ -94,7 +97,9 @@ def _load_raw_points(raw_csv: PathLike) -> pd.DataFrame:
     return df
 
 
-def _resolved_ranges(cfg: PolishConfig) -> Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]]:
+def _resolved_ranges(
+    cfg: PolishConfig,
+) -> Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]]:
     hx = np.array(cfg.hx_range, dtype=float)
     hy = np.array(cfg.hy_range, dtype=float)
     hz = np.array(cfg.hz_range, dtype=float)
@@ -109,11 +114,17 @@ def _resolved_ranges(cfg: PolishConfig) -> Tuple[Tuple[float, float], Tuple[floa
 # 1) Write a minimal but complete LAMMPS "data" (pre-OVITO; header + Masses + Atoms)
 # -----------------------------------------------------------------------------
 
-def _render_lammps_header(atom_num: int,
-                          xlo: float, xhi: float,
-                          ylo: float, yhi: float,
-                          zlo: float, zhi: float,
-                          atom_mass: float) -> str:
+
+def _render_lammps_header(
+    atom_num: int,
+    xlo: float,
+    xhi: float,
+    ylo: float,
+    yhi: float,
+    zlo: float,
+    zhi: float,
+    atom_mass: float,
+) -> str:
     # Minimal header that OVITO can read and that LAMMPS accepts.
     return (
         f"# EXPoly polished (pre-OVITO)\n"
@@ -128,10 +139,12 @@ def _render_lammps_header(atom_num: int,
     )
 
 
-def write_lammps_input_data(raw_csv: PathLike,
-                            cfg: PolishConfig,
-                            out_in_path: PathLike,
-                            out_id_path: Optional[PathLike] = None) -> Tuple[int, Tuple[float, float, float, float, float, float]]:
+def write_lammps_input_data(
+    raw_csv: PathLike,
+    cfg: PolishConfig,
+    out_in_path: PathLike,
+    out_id_path: Optional[PathLike] = None,
+) -> Tuple[int, Tuple[float, float, float, float, float, float]]:
     """
     Build a *complete* LAMMPS data file (header + Masses + Atoms) from raw carved points for OVITO input.
     Returns (atom_num, box_bounds).
@@ -139,11 +152,18 @@ def write_lammps_input_data(raw_csv: PathLike,
     df = _load_raw_points(raw_csv)
     (HX_lo, HX_hi), (HY_lo, HY_hi), (HZ_lo, HZ_hi) = _resolved_ranges(cfg)
 
-    cut = df[(df['HX'] >= HX_lo) & (df['HX'] <= HX_hi) &
-             (df['HY'] >= HY_lo) & (df['HY'] <= HY_hi) &
-             (df['HZ'] >= HZ_lo) & (df['HZ'] <= HZ_hi)].copy()
+    cut = df[
+        (df["HX"] >= HX_lo)
+        & (df["HX"] <= HX_hi)
+        & (df["HY"] >= HY_lo)
+        & (df["HY"] <= HY_hi)
+        & (df["HZ"] >= HZ_lo)
+        & (df["HZ"] <= HZ_hi)
+    ].copy()
     if cut.empty:
-        raise RuntimeError("write_lammps_input_data: No atoms after cropping. Check hx/hy/hz ranges.")
+        raise RuntimeError(
+            "write_lammps_input_data: No atoms after cropping. Check hx/hy/hz ranges."
+        )
 
     # Shift to lower bound and scale
     cut["X"] = (cut["X"] - HX_lo) * cfg.scan_ratio
@@ -151,16 +171,16 @@ def write_lammps_input_data(raw_csv: PathLike,
     cut["Z"] = (cut["Z"] - HZ_lo) * cfg.scan_ratio
 
     atom_num = int(cut.shape[0])
-    xlo, xhi = float(cut['X'].min()), float(cut['X'].max())
-    ylo, yhi = float(cut['Y'].min()), float(cut['Y'].max())
-    zlo, zhi = float(cut['Z'].min()), float(cut['Z'].max())
+    xlo, xhi = float(cut["X"].min()), float(cut["X"].max())
+    ylo, yhi = float(cut["Y"].min()), float(cut["Y"].max())
+    zlo, zhi = float(cut["Z"].min()), float(cut["Z"].max())
 
     out_in_path = _ensure_parent(out_in_path, cfg.overwrite)
 
     # id/type
     cut = cut.reset_index(drop=True)
-    cut['id'] = np.arange(1, atom_num + 1, dtype=int)
-    cut['type'] = 1
+    cut["id"] = np.arange(1, atom_num + 1, dtype=int)
+    cut["type"] = 1
 
     # header
     header = _render_lammps_header(atom_num, xlo, xhi, ylo, yhi, zlo, zhi, cfg.atom_mass)
@@ -168,7 +188,7 @@ def write_lammps_input_data(raw_csv: PathLike,
         f.write(header)
 
     # Atoms
-    cut[['id', 'type', 'X', 'Y', 'Z']].to_csv(
+    cut[["id", "type", "X", "Y", "Z"]].to_csv(
         out_in_path, mode="a", sep=" ", index=False, header=False, float_format="%.10g"
     )
     logger.info("write_lammps_input_data: atoms=%d → %s", atom_num, out_in_path)
@@ -176,7 +196,9 @@ def write_lammps_input_data(raw_csv: PathLike,
     # Optional ID map
     if out_id_path is not None:
         out_id_path = _ensure_parent(out_id_path, True)
-        cut[['id', 'X', 'Y', 'Z', 'margin-ID', 'grain-ID']].to_csv(out_id_path, sep=" ", index=False, header=False)
+        cut[["id", "X", "Y", "Z", "margin-ID", "grain-ID"]].to_csv(
+            out_id_path, sep=" ", index=False, header=False
+        )
         logger.info("write_lammps_input_data: id map → %s", out_id_path)
 
     return atom_num, (xlo, xhi, ylo, yhi, zlo, zhi)
@@ -186,11 +208,14 @@ def write_lammps_input_data(raw_csv: PathLike,
 # 2) OVITO de-duplication (data -> data), shuffled order to avoid bias
 # -----------------------------------------------------------------------------
 
-def ovito_delete_overlap_data(in_lammps_path: PathLike,
-                              out_overlap_mask_path: PathLike,
-                              out_psc_path: PathLike,
-                              cutoff: float,
-                              shuffle_seed: Optional[int] = None) -> None:
+
+def ovito_delete_overlap_data(
+    in_lammps_path: PathLike,
+    out_overlap_mask_path: PathLike,
+    out_psc_path: PathLike,
+    cutoff: float,
+    shuffle_seed: Optional[int] = None,
+) -> None:
     """
     Delete near-duplicates using OVITO, visiting atoms in a shuffled order:
       - Iterate atoms in random order.
@@ -206,9 +231,7 @@ def ovito_delete_overlap_data(in_lammps_path: PathLike,
         from ovito.io import export_file, import_file
         from ovito.modifiers import DeleteSelectedModifier
     except Exception as e:
-        raise RuntimeError(
-            "ovito is required. Install it with `pip install ovito`."
-        ) from e
+        raise RuntimeError("ovito is required. Install it with `pip install ovito`.") from e
 
     in_lammps_path = Path(in_lammps_path)
     out_overlap_mask_path = _ensure_parent(out_overlap_mask_path, True)
@@ -218,7 +241,7 @@ def ovito_delete_overlap_data(in_lammps_path: PathLike,
 
     def modifier(frame, data):
         # Create 'Selection' (0=keep, 1=delete)
-        selection = data.particles_.create_property('Selection', data=0)
+        selection = data.particles_.create_property("Selection", data=0)
         finder = CutoffNeighborFinder(float(cutoff), data)
 
         # shuffled order
@@ -241,12 +264,12 @@ def ovito_delete_overlap_data(in_lammps_path: PathLike,
     data = pipeline.compute()
 
     # Export mask
-    mask = data.particles['Selection'][...]
+    mask = data.particles["Selection"][...]
     np.savetxt(out_overlap_mask_path, mask, fmt="%d", delimiter=",")
     logger.info("ovito_delete_overlap_data: mask → %s", out_overlap_mask_path)
 
     # Remove and write cleaned data
-    pipeline.modifiers.append(DeleteSelectedModifier(operate_on={'particles'}))
+    pipeline.modifiers.append(DeleteSelectedModifier(operate_on={"particles"}))
     export_file(pipeline, str(out_psc_path), "lammps/data")
     logger.info("ovito_delete_overlap_data: cleaned data → %s", out_psc_path)
 
@@ -254,6 +277,7 @@ def ovito_delete_overlap_data(in_lammps_path: PathLike,
 # -----------------------------------------------------------------------------
 # 3) Extract Atoms from OVITO output and rebuild a fresh final.data
 # -----------------------------------------------------------------------------
+
 
 def _extract_atoms_lines_from_data(path: PathLike) -> List[str]:
     """
@@ -305,8 +329,8 @@ def build_final_data_from_ovito_atoms(
     ovito_clean_path: PathLike,
     final_data_path: PathLike,
     atom_mass: float = 58.6934,
-    grain_ids: Optional[Sequence[int]] = None,) -> Tuple[int, Tuple[float, float, float, float, float, float]]:
-
+    grain_ids: Optional[Sequence[int]] = None,
+) -> Tuple[int, Tuple[float, float, float, float, float, float]]:
     """
     Use OVITO-cleaned *data* file, re-extract the Atoms block, recompute N/box, and write a fresh, minimal LAMMPS data:
       - Correct '{N} atoms'
@@ -327,7 +351,8 @@ def build_final_data_from_ovito_atoms(
                 logger.warning(
                     "build_final_data_from_ovito_atoms: grain_ids length (%d) "
                     "!= atom_num (%d); ignoring grain_ids.",
-                    grain_ids.shape[0], atom_num,
+                    grain_ids.shape[0],
+                    atom_num,
                 )
                 grain_ids = None
         except Exception as e:
@@ -377,10 +402,11 @@ def build_final_data_from_ovito_atoms(
 
     logger.info(
         "build_final_data_from_ovito_atoms: final data → %s (atoms=%d, with_grain=%s)",
-        final_data_path, atom_num, grain_ids is not None,
+        final_data_path,
+        atom_num,
+        grain_ids is not None,
     )
     return atom_num, (xlo, xhi, ylo, yhi, zlo, zhi)
-
 
 
 def build_final_dump_with_grain(
@@ -433,8 +459,7 @@ def build_final_dump_with_grain(
 
     if len(xyz) != atom_num:
         raise RuntimeError(
-            "build_final_dump_with_grain: parsed atom count mismatch: "
-            f"{len(xyz)} vs {atom_num}"
+            "build_final_dump_with_grain: parsed atom count mismatch: " f"{len(xyz)} vs {atom_num}"
         )
 
     xyz = np.asarray(xyz, dtype=float)
@@ -458,22 +483,20 @@ def build_final_dump_with_grain(
 
         # ---- Data rows: renumber id = 1..N ----
         new_id = 1
-        for (t, (x, y, z), gid) in zip(types, xyz, grain_ids):
-            f.write(
-                f"{new_id:d} {int(t):d} "
-                f"{x:.10g} {y:.10g} {z:.10g} {int(gid):d}\n"
-            )
+        for t, (x, y, z), gid in zip(types, xyz, grain_ids):
+            f.write(f"{new_id:d} {int(t):d} " f"{x:.10g} {y:.10g} {z:.10g} {int(gid):d}\n")
             new_id += 1
 
     logger.info(
-        "build_final_dump_with_grain: final dump → %s (atoms=%d)",
-        final_dump_path, atom_num
+        "build_final_dump_with_grain: final dump → %s (atoms=%d)", final_dump_path, atom_num
     )
     return atom_num, (xlo, xhi, ylo, yhi, zlo, zhi)
+
 
 # -----------------------------------------------------------------------------
 # 4) Resolve path keys (compatible with your CLI)
 # -----------------------------------------------------------------------------
+
 
 def _resolve_pipeline_paths(paths: dict) -> Tuple[Path, Path, Path, Path]:
     """
@@ -485,16 +508,17 @@ def _resolve_pipeline_paths(paths: dict) -> Tuple[Path, Path, Path, Path]:
 
     Also accepts aliases like tmp_dump/ovito_dump/final_dump, etc.
     """
+
     def pick(*names: str) -> Path:
         for n in names:
             if n in paths and paths[n]:
                 return Path(paths[n])
         raise KeyError(f"Missing any of keys: {names!r} in paths={list(paths.keys())}")
 
-    tmp_in     = pick("tmp_in", "tmp_data", "tmp_dump", "tmp")
+    tmp_in = pick("tmp_in", "tmp_data", "tmp_dump", "tmp")
     ovito_mask = pick("ovito_mask", "mask", "overlap_mask")
-    ovito_psc  = pick("ovito_psc", "ovito_data", "ovito_dump", "ovito_clean")
-    final_lmp  = pick("final_lmp", "final_data", "final_dump", "final")
+    ovito_psc = pick("ovito_psc", "ovito_data", "ovito_dump", "ovito_clean")
+    final_lmp = pick("final_lmp", "final_data", "final_dump", "final")
     return tmp_in, ovito_mask, ovito_psc, final_lmp
 
 
@@ -502,13 +526,13 @@ def _resolve_pipeline_paths(paths: dict) -> Tuple[Path, Path, Path, Path]:
 # 5) Orchestrator (OVITO is mandatory). Produces a *complete* final.data
 # -----------------------------------------------------------------------------
 
+
 def polish_pipeline(
     raw_csv: PathLike,
     cfg: PolishConfig,
     paths: dict,
     final_with_grain: bool = False,
 ) -> Path:
-
     """
     raw_points.csv  → write tmp_polish.in.data (complete data, pre-OVITO)
                     → OVITO de-dup to ovito_psc.data (mandatory)
@@ -560,7 +584,8 @@ def polish_pipeline(
                 logger.warning(
                     "polish: mask length (%d) != id map length (%d); "
                     "cannot safely propagate grain-ID to final.data.",
-                    len(mask_arr), len(id_df),
+                    len(mask_arr),
+                    len(id_df),
                 )
             else:
                 keep_idx = np.where(mask_arr == 0)[0]
@@ -595,16 +620,18 @@ def polish_pipeline(
                 ovito_psc,
                 final_dump,
                 grain_ids_final,
-                timestep=cfg.current_frame,   # e.g., use current_frame as timestep
+                timestep=cfg.current_frame,  # e.g., use current_frame as timestep
             )
             logger.info(
                 "polish: also wrote dump with grain-ID → %s (atoms=%d)",
-                final_dump, atom_num2,
+                final_dump,
+                atom_num2,
             )
         except Exception as e:
             logger.warning(
                 "polish: failed to write dump-with-grainID (%s); "
-                "final.data was written successfully.", e
+                "final.data was written successfully.",
+                e,
             )
 
     # 4) Cleanup
