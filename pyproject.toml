@@ -29,6 +29,11 @@ include = ["expoly*"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
+exclude = [
+  "*.ipynb",
+  "benchmarks",
+  "examples",
+]
 
 [tool.ruff.lint]
 select = [

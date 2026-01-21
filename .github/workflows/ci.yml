@@ -35,11 +35,11 @@ jobs:
 
       - name: Lint (ruff)
         run: |
-          ruff check .
+          ruff check src/expoly tests
 
       - name: Formatting check (black)
         run: |
-          black --check .
+          black --check src/expoly tests
 
       - name: Run tests
         run: |

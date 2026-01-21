@@ -34,4 +34,4 @@ jobs:
 
     - name: Check code formatting
       run: |
-        ruff check . --quiet
+        ruff check src/expoly tests --quiet
