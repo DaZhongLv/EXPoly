@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from expoly.cli import _parse_range, build_parser, main
+from expoly.cli import _parse_range, build_parser
 
 
 def test_parse_range():
@@ -37,7 +35,7 @@ def test_build_parser():
 def test_cli_help():
     """Test that --help works."""
     parser = build_parser()
-    
+
     # Should not raise
     try:
         parser.parse_args(["--help"])
@@ -48,11 +46,11 @@ def test_cli_help():
 def test_cli_run_required_args():
     """Test that run command requires essential arguments."""
     parser = build_parser()
-    
+
     # Missing required args should raise
     with pytest.raises(SystemExit):
         parser.parse_args(["run"])
-    
+
     with pytest.raises(SystemExit):
         parser.parse_args(["run", "--dream3d", "test.dream3d"])
         # Missing --hx, --hy, --hz, --lattice-constant
@@ -61,11 +59,11 @@ def test_cli_run_required_args():
 def test_cli_run_minimal_args(tmp_dir: Path):
     """Test run command with minimal required arguments."""
     parser = build_parser()
-    
+
     # Create dummy file
     dummy_file = tmp_dir / "test.dream3d"
     dummy_file.touch()
-    
+
     args = parser.parse_args([
         "run",
         "--dream3d", str(dummy_file),
@@ -74,7 +72,7 @@ def test_cli_run_minimal_args(tmp_dir: Path):
         "--hz", "0:10",
         "--lattice-constant", "3.524",
     ])
-    
+
     assert args.command == "run"
     assert args.dream3d == dummy_file
     assert args.hx == (0, 10)
@@ -90,7 +88,7 @@ def test_cli_defaults(tmp_dir: Path):
     parser = build_parser()
     dummy_file = tmp_dir / "test.dream3d"
     dummy_file.touch()
-    
+
     args = parser.parse_args([
         "run",
         "--dream3d", str(dummy_file),
@@ -99,7 +97,7 @@ def test_cli_defaults(tmp_dir: Path):
         "--hz", "0:10",
         "--lattice-constant", "3.524",
     ])
-    
+
     assert args.lattice == "FCC"
     assert args.ratio == 1.5
     assert args.ovito_cutoff == 1.6

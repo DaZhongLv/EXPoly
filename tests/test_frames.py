@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from expoly.frames import Frame, find_dataset_keys
 
@@ -11,7 +10,7 @@ from expoly.frames import Frame, find_dataset_keys
 def test_find_dataset_keys(toy_dream3d_file, tmp_dir):
     """Test HDF5 dataset finding."""
     import h5py
-    
+
     with h5py.File(toy_dream3d_file, 'r') as f:
         keys = find_dataset_keys(f, 'FeatureIds', prefer_groups=['CellData'])
         assert len(keys) > 0
