@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -192,6 +192,7 @@ def _carve_one(args) -> pd.DataFrame:
         h5_numneighbors_dset,
         h5_neighborlist_dset,
         h5_dimensions_dset,
+        grain_euler_override,
     ) = args
 
     # Each subprocess opens its own Frame (avoid cross-process handle issues)
@@ -213,9 +214,11 @@ def _carve_one(args) -> pd.DataFrame:
     )
 
     if extend:
-        df = process_extend(grain_id, frame, ccfg)
+        df = process_extend(
+            grain_id, frame, ccfg, grain_euler_override=grain_euler_override
+        )
     else:
-        df = process(grain_id, frame, ccfg)
+        df = process(grain_id, frame, ccfg, grain_euler_override=grain_euler_override)
 
     # Required column order: X,Y,Z,HX,HY,HZ,margin-ID,grain-ID
     cols = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
@@ -240,6 +243,7 @@ def _carve_all(
     h5_numneighbors_dset: str | None = None,
     h5_neighborlist_dset: str | None = None,
     h5_dimensions_dset: str | None = None,
+    random_orientation: bool = False,
 ) -> pd.DataFrame:
     frame = _build_frame_for_carve(
         dream3d,
@@ -253,6 +257,44 @@ def _carve_all(
     gids = _pick_grain_ids(frame, hx, hy, hz)
     total_grains = len(gids)
     LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", total_grains, hx, hy, hz)
+
+    # Build grain→Euler override map for random-orientation mode
+    grain_euler_override: Dict[int, np.ndarray] | None = None
+    if random_orientation:
+        LOG.info("[random-orientation] Building shuffled orientation mapping...")
+        # Original list: all selected grain IDs in order
+        original_list = [int(g) for g in gids]
+        # Shuffled list: same IDs but shuffled
+        shuffled_list = original_list.copy()
+        rng = np.random.default_rng(seed)
+        rng.shuffle(shuffled_list)
+        
+        # Build mapping: for each grain_id, find its position in shuffled_list,
+        # then use that position to get the grain_id from original_list,
+        # and read Euler angle for that grain_id
+        grain_euler_override = {}
+        for grain_id in original_list:
+            # Find grain_id's position in shuffled_list
+            shuffled_index = shuffled_list.index(grain_id)
+            # Get the grain_id at that position in original_list
+            euler_source_grain_id = original_list[shuffled_index]
+            # Read Euler angle for that source grain_id
+            try:
+                euler = frame.search_avg_Euler(euler_source_grain_id)
+                grain_euler_override[grain_id] = euler.copy()
+            except (ValueError, KeyError):
+                LOG.warning(
+                    "[random-orientation] Grain %d (mapped from %d) not found, using zero orientation",
+                    grain_id,
+                    euler_source_grain_id,
+                )
+                grain_euler_override[grain_id] = np.array([0.0, 0.0, 0.0], dtype=float)
+        
+        LOG.info(
+            "[random-orientation] Mapped %d grain orientations (seed=%s)",
+            len(grain_euler_override),
+            seed,
+        )
 
     voxel_csv_str = str(voxel_csv) if voxel_csv is not None else None
     tasks = [
@@ -273,6 +315,7 @@ def _carve_all(
             h5_numneighbors_dset,
             h5_neighborlist_dset,
             h5_dimensions_dset,
+            grain_euler_override,
         )
         for g in gids
     ]
@@ -440,6 +483,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Random seed for reproducible carving (default: None)",
     )
+    carve_group.add_argument(
+        "--random-orientation",
+        action="store_true",
+        help="Randomize grain orientations: shuffle grain IDs and reassign orientations. "
+        "Each grain ID gets a random orientation from the shuffled list. Use --seed for reproducibility.",
+    )
 
     # Polish group
     polish_group = r.add_argument_group("Polish")
@@ -554,6 +603,7 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
         h5_numneighbors_dset=getattr(ns, "h5_numneighbors_dset", None),
         h5_neighborlist_dset=getattr(ns, "h5_neighborlist_dset", None),
         h5_dimensions_dset=getattr(ns, "h5_dimensions_dset", None),
+        random_orientation=getattr(ns, "random_orientation", False),
     )
 
     raw_csv = run_dir / "raw_points.csv"

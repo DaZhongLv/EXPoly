@@ -5,7 +5,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -150,6 +150,7 @@ def prepare_carve(
     out_df: pd.DataFrame,
     frame: Frame,
     cfg: CarveConfig,
+    euler_override: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Build a ball-shaped lattice cloud covering the WHOLE grain volume:
@@ -157,6 +158,9 @@ def prepare_carve(
       2) Build SC points inside that sphere (spacing = cfg.ratio).
       3) Map SC points to the requested lattice (FCC/BCC/DIA).
       4) Rotate by grain's average Euler (Bunge) and translate to the grain center.
+    
+    If euler_override is provided (shape (3,) Bunge Euler angles), it is used
+    instead of the frame's orientation for this grain (e.g. for random-orientation mode).
     """
     if "ID" in out_df.columns:
         grain_id = int(out_df["ID"].iloc[0])
@@ -165,7 +169,10 @@ def prepare_carve(
     else:
         raise ValueError("out_df must contain 'ID' or 'grain-ID'.")
 
-    avg_eul = frame.search_avg_Euler(grain_id)
+    if euler_override is not None:
+        avg_eul = np.asarray(euler_override, dtype=float).reshape(3)
+    else:
+        avg_eul = frame.search_avg_Euler(grain_id)
     # Your general_func.eul2rot implements Bunge convention
     R = general_func.eul2rot_bunge(avg_eul)  # 3x3
 
@@ -196,12 +203,14 @@ def carve_points(
     out_df: pd.DataFrame,
     frame: Frame,
     cfg: CarveConfig,
+    euler_override: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Keep lattice points that lie within 'cfg.ci_radius' (in H space) of ANY voxel in 'out_df'.
     Guarantees a volumetric cloud (not a thin slice).
+    If euler_override is provided (Bunge Euler (3,)), it is used for rotation instead of frame.
     """
-    tr_pts = prepare_carve(out_df, frame, cfg)
+    tr_pts = prepare_carve(out_df, frame, cfg, euler_override=euler_override)
 
     t0 = time.process_time()
     tree_H = spatial.cKDTree(out_df[["HX", "HY", "HZ"]].to_numpy())
@@ -240,43 +249,69 @@ def carve_gb_keep_m1(margin_df: pd.DataFrame, lattice_points: np.ndarray) -> pd.
 # ============================== Grain pipelines ===============================
 
 
-def process_pre(grain_id: int, frame: Frame, cfg: CarveConfig) -> np.ndarray:
+def process_pre(
+    grain_id: int,
+    frame: Frame,
+    cfg: CarveConfig,
+    grain_euler_override: Optional[Dict[int, np.ndarray]] = None,
+) -> np.ndarray:
     """
     Prepare carved lattice cloud for a single grain (no GB filtering).
+    If grain_euler_override is provided, use it for this grain's orientation.
     """
     out_df = frame.from_ID_to_D(grain_id)
     if "ID" not in out_df.columns:
         out_df = out_df.copy()
         out_df["ID"] = grain_id
-    return carve_points(out_df, frame, cfg)
+    euler_override = (
+        grain_euler_override.get(grain_id) if grain_euler_override else None
+    )
+    return carve_points(out_df, frame, cfg, euler_override=euler_override)
 
 
-def process(grain_id: int, frame: Frame, cfg: CarveConfig) -> pd.DataFrame:
+def process(
+    grain_id: int,
+    frame: Frame,
+    cfg: CarveConfig,
+    grain_euler_override: Optional[Dict[int, np.ndarray]] = None,
+) -> pd.DataFrame:
     """
     Full M1-style pipeline for one grain:
       - compute lattice cloud (carve_points)
       - compute margin from frame.find_grain_NN_with_out()
       - filter lattice by M1 (margin-ID in {0,2})
     Returns DataFrame with ['X','Y','Z','HX','HY','HZ','margin-ID','grain-ID'].
+    If grain_euler_override is provided, use it for this grain's orientation.
     """
     margin = frame.find_grain_NN_with_out(grain_id)
-    carved = process_pre(grain_id, frame, cfg)
+    carved = process_pre(
+        grain_id, frame, cfg, grain_euler_override=grain_euler_override
+    )
     kept = carve_gb_keep_m1(margin, carved)
     kept["grain-ID"] = grain_id
     return kept
 
 
-def process_extend(grain_id: int, frame: Frame, cfg: CarveConfig) -> pd.DataFrame:
+def process_extend(
+    grain_id: int,
+    frame: Frame,
+    cfg: CarveConfig,
+    grain_euler_override: Optional[Dict[int, np.ndarray]] = None,
+) -> pd.DataFrame:
     """
     Extended pipeline using frame extensions before carving.
     Requires: Frame.get_extend_Out_() and Frame.renew_outer_margin().
+    If grain_euler_override is provided, use it for this grain's orientation.
     """
     out_margin = frame.find_grain_NN_with_out(grain_id)
     extend = frame.get_extend_Out_(out_margin, cfg.unit_extend_ratio)
     extend = frame.renew_outer_margin(extend)
     extend_xyz = extend.rename(columns={"grain-ID": "ID"}).copy()
 
-    carved = carve_points(extend_xyz, frame, cfg)
+    euler_override = (
+        grain_euler_override.get(grain_id) if grain_euler_override else None
+    )
+    carved = carve_points(extend_xyz, frame, cfg, euler_override=euler_override)
     kept = carve_gb_keep_m1(extend, carved)
     kept["grain-ID"] = grain_id
     return kept

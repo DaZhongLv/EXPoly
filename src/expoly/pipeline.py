@@ -30,6 +30,7 @@ def run(
     h5_numneighbors_dset: Optional[str] = None,
     h5_neighborlist_dset: Optional[str] = None,
     h5_dimensions_dset: Optional[str] = None,
+    random_orientation: bool = False,
     verbose: bool = False,
 ) -> Path:
     """
@@ -80,6 +81,10 @@ def run(
         Custom NeighborList dataset name (default: NeighborList)
     h5_dimensions_dset : str, optional
         Custom DIMENSIONS dataset name (default: DIMENSIONS)
+    random_orientation : bool, default=False
+        If True, shuffle grain IDs and reassign orientations randomly.
+        Each grain ID gets a random orientation from the shuffled list.
+        Use seed for reproducibility.
     verbose : bool, default=False
         Enable verbose logging
 
@@ -130,6 +135,7 @@ def run(
         keep_tmp=keep_tmp,
         outdir=Path(outdir) if outdir else None,
         final_with_grain=final_with_grain,
+        random_orientation=random_orientation,
         verbose=verbose,
     )
 

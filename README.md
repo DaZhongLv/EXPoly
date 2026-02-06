@@ -182,18 +182,49 @@ expoly run \
   [--atom-mass <float>]         # Default: 58.6934 (Ni)
   [--keep-tmp]                  # Keep intermediate files
   [--final-with-grain]          # Write additional dump with grain-ID
+  [--random-orientation]        # Randomize grain orientations (see below)
+  [--seed <int>]                # Random seed for reproducibility
   [--verbose]                   # Verbose logging
 ```
 
 **Advanced options:**
 - `--extend`: Use extended-neighborhood pipeline for carving. When enabled, automatically multiplies HX/HY/HZ ranges by unit-extend-ratio in polish step.
 - `--unit-extend-ratio <int>`: Unit extend ratio (default: 3, recommend odd numbers)
+- `--random-orientation`: Randomize grain orientations. Shuffles grain IDs and reassigns orientations so each grain ID gets a random orientation from the shuffled list. Use with `--seed` for reproducibility. See [Random orientation](#random-orientation) below.
+- `--seed <int>`: Random seed for reproducible carving (affects ball grid randomization and, with `--random-orientation`, orientation shuffling)
 - `--voxel-csv <file>`: Optional voxel grid CSV (whitespace-separated)
 - `--h5-grain-dset <name>`: Custom grain-ID dataset name (default: FeatureIds)
 - `--h5-euler-dset <name>`: Custom Euler angles dataset name (default: EulerAngles)
 - `--h5-numneighbors-dset <name>`: Custom NumNeighbors dataset name (default: NumNeighbors)
 - `--h5-neighborlist-dset <name>`: Custom NeighborList dataset name (default: NeighborList). Example: NeighborList2
 - `--h5-dimensions-dset <name>`: Custom DIMENSIONS dataset name (default: DIMENSIONS)
+
+### Random orientation
+
+With **`--random-orientation`**, EXPoly reassigns orientations to grain IDs using a shuffled mapping:
+
+1. **Build orientation list**: Read all selected grain IDs and their orientations from the HDF5 Euler dataset.
+2. **Shuffle grain IDs**: Create a shuffled list of grain IDs (optionally using `--seed` for reproducibility).
+3. **Reassign orientations**: For each grain ID, find its position in the shuffled list, then use that position to get the corresponding grain ID from the original list, and assign that grain's orientation.
+
+**Example**: If you have grains [3, 5, 7] and shuffled list is [7, 3, 5]:
+- Grain ID 3 → position 1 in shuffled → original[1] = 5 → use grain 5's orientation
+- Grain ID 5 → position 2 in shuffled → original[2] = 7 → use grain 7's orientation  
+- Grain ID 7 → position 0 in shuffled → original[0] = 3 → use grain 3's orientation
+
+This breaks the original grain ID ↔ orientation correspondence while keeping the same set of orientations in the volume.
+
+**Use cases**: Sensitivity studies, null models, or when you want to randomize orientation assignments while preserving the orientation distribution.
+
+**Example command**:
+```bash
+expoly run --dream3d An0new6.dream3d --hx 0:50 --hy 0:50 --hz 0:50 \
+  --lattice FCC --ratio 1.5 --lattice-constant 3.524 \
+  --h5-grain-dset FeatureIds --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS \
+  --random-orientation --seed 42
+```
 
 ### OVITO Cutoff Guidelines
 
