@@ -171,10 +171,55 @@ def _build_frame_for_carve(
 # --------------------------- carve runner ---------------------------
 
 
+# Global variable for worker process to cache Frame (loaded once per worker)
+_worker_frame_cache: Frame | None = None
+_worker_frame_args: dict | None = None
+
+
+def _init_worker_frame(
+    dream3d_path: str,
+    voxel_csv: str | None,
+    h5_grain_dset: str | None,
+    h5_euler_dset: str | None,
+    h5_numneighbors_dset: str | None,
+    h5_neighborlist_dset: str | None,
+    h5_dimensions_dset: str | None,
+) -> None:
+    """
+    Initialize worker process: load Frame once and cache it.
+    This avoids reloading HDF5 file for every task in the same worker.
+    """
+    global _worker_frame_cache, _worker_frame_args
+    args_key = (
+        dream3d_path,
+        voxel_csv,
+        h5_grain_dset,
+        h5_euler_dset,
+        h5_numneighbors_dset,
+        h5_neighborlist_dset,
+        h5_dimensions_dset,
+    )
+    # Only reload if arguments changed (shouldn't happen, but safety check)
+    if _worker_frame_args != args_key:
+        _worker_frame_cache = _build_frame_for_carve(
+            Path(dream3d_path),
+            voxel_csv=Path(voxel_csv) if voxel_csv is not None else None,
+            h5_grain_dset=h5_grain_dset,
+            h5_euler_dset=h5_euler_dset,
+            h5_numneighbors_dset=h5_numneighbors_dset,
+            h5_neighborlist_dset=h5_neighborlist_dset,
+            h5_dimensions_dset=h5_dimensions_dset,
+        )
+        _worker_frame_args = args_key
+
+
 def _carve_one(args) -> pd.DataFrame:
     """
     Subprocess worker: select process based on extend flag; raises exception on failure (main process logs).
+    Uses cached Frame from _init_worker_frame to avoid reloading HDF5 for each task.
     """
+    global _worker_frame_cache
+
     (
         grain_id,
         dream3d_path,
@@ -195,16 +240,19 @@ def _carve_one(args) -> pd.DataFrame:
         grain_euler_override,
     ) = args
 
-    # Each subprocess opens its own Frame (avoid cross-process handle issues)
-    frame = _build_frame_for_carve(
-        dream3d_path,
-        voxel_csv=Path(voxel_csv) if voxel_csv is not None else None,
-        h5_grain_dset=h5_grain_dset,
-        h5_euler_dset=h5_euler_dset,
-        h5_numneighbors_dset=h5_numneighbors_dset,
-        h5_neighborlist_dset=h5_neighborlist_dset,
-        h5_dimensions_dset=h5_dimensions_dset,
-    )
+    # Use cached Frame (loaded once per worker via initializer)
+    if _worker_frame_cache is None:
+        # Fallback: load if cache not initialized (shouldn't happen with proper initializer)
+        _worker_frame_cache = _build_frame_for_carve(
+            Path(dream3d_path),
+            voxel_csv=Path(voxel_csv) if voxel_csv is not None else None,
+            h5_grain_dset=h5_grain_dset,
+            h5_euler_dset=h5_euler_dset,
+            h5_numneighbors_dset=h5_numneighbors_dset,
+            h5_neighborlist_dset=h5_neighborlist_dset,
+            h5_dimensions_dset=h5_dimensions_dset,
+        )
+    frame = _worker_frame_cache
 
     ccfg = CarveConfig(
         lattice=lattice,
@@ -267,26 +315,50 @@ def _carve_all(
         rng = np.random.default_rng(seed)
         rng.shuffle(shuffled_list)
 
-        # Build mapping: for each grain_id, find its position in shuffled_list,
-        # then use that position to get the grain_id from original_list,
-        # and read Euler angle for that grain_id
-        grain_euler_override = {}
-        for grain_id in original_list:
-            # Find grain_id's position in shuffled_list
-            shuffled_index = shuffled_list.index(grain_id)
-            # Get the grain_id at that position in original_list
-            euler_source_grain_id = original_list[shuffled_index]
-            # Read Euler angle for that source grain_id
-            try:
-                euler = frame.search_avg_Euler(euler_source_grain_id)
-                grain_euler_override[grain_id] = euler.copy()
-            except (ValueError, KeyError):
-                LOG.warning(
-                    "[random-orientation] Grain %d (mapped from %d) not found, using zero orientation",
-                    grain_id,
-                    euler_source_grain_id,
-                )
-                grain_euler_override[grain_id] = np.array([0.0, 0.0, 0.0], dtype=float)
+        # Optimized: batch compute all grain orientations at once using pandas groupby
+        # Instead of calling search_avg_Euler 437 times (each scans entire fid array),
+        # compute all averages in one pass
+        import pandas as pd
+
+        gids_set = set(original_list)
+        mask_selected = np.isin(frame.fid, original_list)
+        if np.any(mask_selected):
+            df_euler = pd.DataFrame(
+                {
+                    "grain_id": frame.fid[mask_selected],
+                    "e1": frame.eul[mask_selected, 0],
+                    "e2": frame.eul[mask_selected, 1],
+                    "e3": frame.eul[mask_selected, 2],
+                }
+            )
+            grain_means = df_euler.groupby("grain_id")[["e1", "e2", "e3"]].mean()
+
+            # Build mapping: for each grain_id, find its position in shuffled_list,
+            # then use that position to get the grain_id from original_list,
+            # and get Euler angle from precomputed grain_means
+            grain_euler_override = {}
+            for grain_id in original_list:
+                # Find grain_id's position in shuffled_list
+                shuffled_index = shuffled_list.index(grain_id)
+                # Get the grain_id at that position in original_list
+                euler_source_grain_id = original_list[shuffled_index]
+                # Get Euler angle from precomputed means
+                if euler_source_grain_id in grain_means.index:
+                    euler = grain_means.loc[euler_source_grain_id].values
+                    grain_euler_override[grain_id] = euler.copy()
+                else:
+                    LOG.warning(
+                        "[random-orientation] Grain %d (mapped from %d) not found, using zero orientation",
+                        grain_id,
+                        euler_source_grain_id,
+                    )
+                    grain_euler_override[grain_id] = np.array([0.0, 0.0, 0.0], dtype=float)
+        else:
+            # Fallback: no selected grains found
+            LOG.warning("[random-orientation] No selected grains found in data")
+            grain_euler_override = {
+                int(gid): np.array([0.0, 0.0, 0.0], dtype=float) for gid in original_list
+            }
 
         LOG.info(
             "[random-orientation] Mapped %d grain orientations (seed=%s)",
@@ -337,8 +409,23 @@ def _carve_all(
         import multiprocessing as mp
 
         LOG.info("[carve] Processing %d grains with %d workers...", total_grains, workers)
+        LOG.info(
+            "[carve] Each worker will load HDF5 file once and reuse it for all assigned grains"
+        )
         sys.stdout.flush()
-        with mp.get_context("spawn").Pool(processes=workers) as pool:
+        # Initialize each worker process with Frame loaded once (shared across tasks in that worker)
+        init_args = (
+            str(dream3d),
+            voxel_csv_str,
+            h5_grain_dset,
+            h5_euler_dset,
+            h5_numneighbors_dset,
+            h5_neighborlist_dset,
+            h5_dimensions_dset,
+        )
+        with mp.get_context("spawn").Pool(
+            processes=workers, initializer=_init_worker_frame, initargs=init_args
+        ) as pool:
             # Use imap for progress tracking
             chunks = []
             completed = 0
