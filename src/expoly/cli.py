@@ -320,7 +320,6 @@ def _carve_all(
         # compute all averages in one pass
         import pandas as pd
 
-        gids_set = set(original_list)
         mask_selected = np.isin(frame.fid, original_list)
         if np.any(mask_selected):
             df_euler = pd.DataFrame(
