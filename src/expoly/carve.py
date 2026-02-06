@@ -158,7 +158,7 @@ def prepare_carve(
       2) Build SC points inside that sphere (spacing = cfg.ratio).
       3) Map SC points to the requested lattice (FCC/BCC/DIA).
       4) Rotate by grain's average Euler (Bunge) and translate to the grain center.
-    
+
     If euler_override is provided (shape (3,) Bunge Euler angles), it is used
     instead of the frame's orientation for this grain (e.g. for random-orientation mode).
     """

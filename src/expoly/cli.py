@@ -268,7 +268,7 @@ def _carve_all(
         shuffled_list = original_list.copy()
         rng = np.random.default_rng(seed)
         rng.shuffle(shuffled_list)
-        
+
         # Build mapping: for each grain_id, find its position in shuffled_list,
         # then use that position to get the grain_id from original_list,
         # and read Euler angle for that grain_id
@@ -289,7 +289,7 @@ def _carve_all(
                     euler_source_grain_id,
                 )
                 grain_euler_override[grain_id] = np.array([0.0, 0.0, 0.0], dtype=float)
-        
+
         LOG.info(
             "[random-orientation] Mapped %d grain orientations (seed=%s)",
             len(grain_euler_override),
