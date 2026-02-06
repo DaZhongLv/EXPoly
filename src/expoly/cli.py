@@ -214,9 +214,7 @@ def _carve_one(args) -> pd.DataFrame:
     )
 
     if extend:
-        df = process_extend(
-            grain_id, frame, ccfg, grain_euler_override=grain_euler_override
-        )
+        df = process_extend(grain_id, frame, ccfg, grain_euler_override=grain_euler_override)
     else:
         df = process(grain_id, frame, ccfg, grain_euler_override=grain_euler_override)
 

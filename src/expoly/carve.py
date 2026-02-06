@@ -263,9 +263,7 @@ def process_pre(
     if "ID" not in out_df.columns:
         out_df = out_df.copy()
         out_df["ID"] = grain_id
-    euler_override = (
-        grain_euler_override.get(grain_id) if grain_euler_override else None
-    )
+    euler_override = grain_euler_override.get(grain_id) if grain_euler_override else None
     return carve_points(out_df, frame, cfg, euler_override=euler_override)
 
 
@@ -284,9 +282,7 @@ def process(
     If grain_euler_override is provided, use it for this grain's orientation.
     """
     margin = frame.find_grain_NN_with_out(grain_id)
-    carved = process_pre(
-        grain_id, frame, cfg, grain_euler_override=grain_euler_override
-    )
+    carved = process_pre(grain_id, frame, cfg, grain_euler_override=grain_euler_override)
     kept = carve_gb_keep_m1(margin, carved)
     kept["grain-ID"] = grain_id
     return kept
@@ -308,9 +304,7 @@ def process_extend(
     extend = frame.renew_outer_margin(extend)
     extend_xyz = extend.rename(columns={"grain-ID": "ID"}).copy()
 
-    euler_override = (
-        grain_euler_override.get(grain_id) if grain_euler_override else None
-    )
+    euler_override = grain_euler_override.get(grain_id) if grain_euler_override else None
     carved = carve_points(extend_xyz, frame, cfg, euler_override=euler_override)
     kept = carve_gb_keep_m1(extend, carved)
     kept["grain-ID"] = grain_id
