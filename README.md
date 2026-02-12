@@ -242,63 +242,47 @@ The default cutoff (1.6) is safe for Ni with a=3.524 Å (FCC). Adjust `--ovito-c
 
 ### Voronoi Topology Extraction
 
-The `voronoi` command extracts grain boundary (GB) topology from LAMMPS dump files and generates a voxelized representation:
+**Purpose:** Convert the atomistic structure from experimental (Dream3D-derived) data into a **Voronoi-like** representation: a regular voxel grid where each voxel is assigned to a grain, with grain boundaries approximated by planar patches. This smooths the original voxel/atom layout and can be used to reconstruct a new atomistic structure with cleaner grain-boundary topology.
+
+**How it works (brief):** The pipeline reads a LAMMPS dump with per-atom grain IDs, crops the edges, then classifies each atom by k-NN into grain-boundary surface (2 grains), triple-line (3 grains), or quadruple-point (4 grains). From quadruple points and triple-line segments it builds a piecewise planar grain-boundary mesh; each grain is voxelized as the set of grid points inside the half-spaces defined by its adjacent GB patches. The result is a regular voxel grid (CSV) where each voxel is assigned to a grain—a Voronoi-like partitioning that can be fed back into `expoly run --voxel-csv` to reconstruct a smoothed atomistic structure.
+
+**Input**
+
+| Input | Description |
+|-------|-------------|
+| **LAMMPS dump** (`--dump`) | Single-timestep dump with columns: atom id, type, x, y, z, grain-ID. Typically `final.dump` from `expoly run --final-with-grain`. |
+
+**Output**
+
+| Output | Description |
+|--------|-------------|
+| **Voxel CSV** (`--output`) | Space-separated CSV with columns: `atom-ID`, `grain-ID`, `voxel-X`, `voxel-Y`, `voxel-Z`, `phase`, `CI`. Integer grid coordinates (0-based, increment by 1 after normalizing by `--voxel-size`). Can be used as `--voxel-csv` in a subsequent `expoly run` to rebuild atoms. |
+
+**Standalone `voronoi` command (two-step flow):**
 
 ```bash
 expoly voronoi \
-  --dump final.dump \
-  --output voro_test.csv \
-  --voxel-size 2.0 \
-  --cube-ratio 0.015 \
-  --k 25 \
-  --min-other-atoms 4
-```
-
-**What This Does:**
-
-1. **Read LAMMPS dump** (`--dump`): Loads atom positions and grain IDs from a LAMMPS dump file (single timestep).
-
-2. **Crop inner box** (`--cube-ratio`): Removes a percentage of atoms from each side (default 0.015 = 1.5%) to focus on interior grain boundaries.
-
-3. **Classify topology** (`--k`, `--min-other-atoms`): 
-   - Identifies surface atoms (2 grain neighbors), triple-line atoms (3 grain neighbors), and quadruple-junction atoms (4 grain neighbors)
-   - Uses k-nearest neighbors (default k=25) for classification
-
-4. **Build Voronoi mesh**: Constructs grain boundary surfaces and triple-line segments from topology classification.
-
-5. **Voxelize grains** (`--voxel-size`): Converts grain volumes to voxel grids with specified voxel size (default 2.0 Å).
-
-6. **Output**: Generates `voxel_all.csv` with columns:
-   - `atom-ID`: Original atom ID from dump
-   - `grain-ID`: Grain identifier
-   - `voxel-X`, `voxel-Y`, `voxel-Z`: Integer grid coordinates (increment by 1, normalized by voxel-size)
-   - `phase`: Phase identifier
-   - `CI`: Confidence index
-
-**Voronoi Command Flags:**
-
-```bash
-expoly voronoi \
-  --dump <file>                    # Required: LAMMPS dump file path
-  --output <file>                   # Required: Output CSV path
-  [--voxel-size <float>]            # Default: 2.0 (voxel size in Å)
-  [--cube-ratio <float>]            # Default: 0.015 (crop ratio per side)
-  [--k <int>]                       # Default: 25 (k-NN for classification)
-  [--min-other-atoms <int>]         # Default: 4 (min other-grain neighbors)
-  [--verbose]                       # Verbose logging
-```
-
-**Example:**
-
-```bash
-# Extract topology from final.dump and generate voxelized output
-expoly voronoi \
-  --dump runs/expoly-1770883938/final.dump \
-  --output runs/expoly-1770883938/voro_test.csv \
+  --dump runs/expoly-<timestamp>/final.dump \
+  --output runs/expoly-<timestamp>/voro_test.csv \
   --voxel-size 2.0
 ```
 
-**Note**: The voxel coordinates (`voxel-X`, `voxel-Y`, `voxel-Z`) are normalized by `--voxel-size`, so they increment by 1 instead of by the voxel size value. For example, with `--voxel-size 2.0`, coordinates will be `0, 1, 2, 3...` instead of `0, 2, 4, 6...`.
+Optional: `--cube-ratio 0.015`, `--k 25`, `--min-other-atoms 4`. See `expoly voronoi --help` for all flags.
+
+**One-shot flow (`--generate-voronoi`):** Run the full pipeline (run → voronoi → run with CSV) in one command so you do not need to run `expoly voronoi` or a second `expoly run --voxel-csv` manually:
+
+```bash
+expoly run \
+  --dream3d An0new6.dream3d \
+  --hx 0:119 --hy 0:119 --hz 0:75 \
+  --lattice FCC --ratio 2 --lattice-constant 3.524 \
+  --h5-grain-dset FeatureIds --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS \
+  --generate-voronoi --voronoi-voxel-size 2.0
+```
+
+Input: Dream3D file + H-ranges and lattice options. Output: same run directory contains `voronoi.csv` and the final atomistic `final.data` from the second pass.
 
 ---
 
@@ -426,31 +410,30 @@ python minimal_example.py
 
 ### Voronoi Topology Extraction Example
 
-After running the main pipeline to generate `final.dump`, you can extract GB topology:
+See the [Voronoi Topology Extraction](#voronoi-topology-extraction) section for purpose, inputs/outputs, and how it works. Two ways to run:
+
+**Two-step (manual):** Input: Dream3D + run options → get `final.dump`. Then input: `final.dump` → output: voxel CSV (e.g. `voro_test.csv`).
 
 ```bash
-# Step 1: Run main pipeline to generate final.dump
+# Step 1 — Input: Dream3D. Output: runs/expoly-<timestamp>/final.dump
 expoly run \
   --dream3d An0new6.dream3d \
   --hx 0:119 --hy 0:119 --hz 0:75 \
-  --lattice FCC --ratio 2 \
-  --lattice-constant 3.524 \
+  --lattice FCC --ratio 2 --lattice-constant 3.524 \
   --workers 3 \
-  --h5-grain-dset FeatureIds \
-  --h5-euler-dset EulerAngles \
-  --h5-numneighbors-dset NumNeighbors \
-  --h5-neighborlist-dset NeighborList2 \
+  --h5-grain-dset FeatureIds --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors --h5-neighborlist-dset NeighborList2 \
   --h5-dimensions-dset DIMENSIONS \
   --final-with-grain
 
-# Step 2: Extract Voronoi topology from final.dump
+# Step 2 — Input: final.dump. Output: voro_test.csv (use as --voxel-csv in a later run if desired)
 expoly voronoi \
   --dump runs/expoly-<timestamp>/final.dump \
   --output runs/expoly-<timestamp>/voro_test.csv \
   --voxel-size 2.0
 ```
 
-**One-shot option**: To run the full Voronoi refinement in a single command (run → voronoi → run with CSV), use `--generate-voronoi` and optionally `--voronoi-voxel-size`:
+**One-shot (`--generate-voronoi`):** Input: Dream3D + same run options + `--generate-voronoi`. Output: same run dir with `voronoi.csv` and final `final.data`.
 
 ```bash
 expoly run \
@@ -462,8 +445,6 @@ expoly run \
   --h5-dimensions-dset DIMENSIONS \
   --generate-voronoi --voronoi-voxel-size 2.0
 ```
-
-That produces `voronoi.csv` in the run directory and runs a second pass with it to get the final atomistic structure. The manual two-step flow above yields `voro_test.csv` (or your chosen output path) for inspection or custom reuse.
 
 **Sample data**: Sample Dream3D files are typically large (100+ MB) and are excluded from Git via `.gitignore`. To get sample data:
 
