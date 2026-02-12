@@ -479,12 +479,6 @@ pytest tests/ -v
 
 ---
 
-## Citation
-
-If you use EXPoly in your research, please cite it. See [`CITATION.cff`](CITATION.cff) for citation information.
-
----
-
 ## License
 
 MIT License - see [`LICENSE`](LICENSE) for details.

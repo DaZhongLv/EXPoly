@@ -1,85 +1,85 @@
-# EXPoly 快速开始指南
+# EXPoly Quick Start Guide
 
-## ✅ 文件完整性确认
+## ✅ Verify Files
 
-所有文件已保存完成！以下是验证和开始使用的步骤。
+All files have been saved. Follow these steps to verify and start using the project.
 
-## 📋 文件检查
+## 📋 File Check
 
-### 核心文件（已确认）
+### Core Files (confirmed)
 
-✅ **项目配置**
-- `pyproject.toml` (版本 1.0.0)
+✅ **Project configuration**
+- `pyproject.toml` (version 1.0.0)
 - `LICENSE` (MIT)
-- `.gitignore` (已配置排除 *.dream3d)
+- `.gitignore` (configured to exclude *.dream3d)
 
-✅ **源代码** (src/expoly/)
-- 所有 8 个 Python 模块文件
+✅ **Source code** (src/expoly/)
+- All 8 Python module files
 
-✅ **测试** (tests/)
-- 4 个测试文件，~25 个测试
+✅ **Tests** (tests/)
+- 4 test files, ~25 tests
 
-✅ **文档**
-- README.md (完整，328 行)
+✅ **Documentation**
+- README.md (full, 328 lines)
 - docs/use_cases.md
 - docs/benchmarks.md
 
-✅ **示例和基准**
-- examples/ (2 个示例文件)
-- benchmarks/ (2 个基准脚本)
+✅ **Examples and benchmarks**
+- examples/ (2 example files)
+- benchmarks/ (2 benchmark scripts)
 
 ✅ **CI/CD**
 - .github/workflows/tests.yml
 
-## 🚀 开始使用
+## 🚀 Get Started
 
-### 1. 本地安装和验证
+### 1. Local install and verification
 
 ```bash
-# 进入项目目录
+# Go to project directory
 cd /Users/lvmeizhong/Desktop/expoly-with-legacy/EXPoly
 
-# 安装（开发模式）
+# Install (editable mode)
 pip install -e ".[dev]"
 pip install ovito
 
-# 验证安装
+# Verify installation
 expoly --help
 
-# 运行测试
+# Run tests
 pytest tests/ -v
 
-# 测试 doctor 命令
+# Test doctor command
 expoly doctor --dream3d An0new6.dream3d --hx 0:50 --hy 0:50 --hz 0:50
 ```
 
-### 2. 运行示例
+### 2. Run examples
 
-**选项 A: 下载真实 sample 数据**
+**Option A: Download real sample data**
 ```bash
-# 从 CMU Grain Boundary Data Archive 下载
-# 访问: http://mimp.materials.cmu.edu/~gr20/Grain_Boundary_Data_Archive/Ni_velocity/Ni_velocity.html
-# 下载 "Microstructure Data" archive (367 MB, 包含 6 个 Dream3D 文件)
-# 解压后使用任意 Dream3D 文件
+# From CMU Grain Boundary Data Archive
+# Visit: http://mimp.materials.cmu.edu/~gr20/Grain_Boundary_Data_Archive/Ni_velocity/Ni_velocity.html
+# Download "Microstructure Data" archive (367 MB, contains 6 Dream3D files)
+# Extract and use any Dream3D file
 ```
 
-**选项 B: 使用本地 sample 文件（如果存在）**
+**Option B: Use a local sample file (if present)**
 ```bash
 cd examples
 python minimal_example.py
-# 会自动检测并使用 An0new6.dream3d（如果存在）
+# Will auto-detect and use An0new6.dream3d if present
 ```
 
-**选项 C: 生成测试数据**
+**Option C: Generate test data**
 ```bash
-# 生成小测试文件
+# Generate a small test file
 python examples/toy_data_generator.py
 
-# 运行示例（会使用生成的 toy_data.dream3d）
+# Run example (uses generated toy_data.dream3d)
 python examples/minimal_example.py
 ```
 
-### 3. 使用自己的数据
+### 3. Use your own data
 
 ```bash
 expoly run \
@@ -89,33 +89,33 @@ expoly run \
   --lattice-constant 3.524
 ```
 
-## 📤 GitHub 上传
+## 📤 Upload to GitHub
 
-### 关于 Sample 文件（An0new6.dream3d）
+### About sample file (An0new6.dream3d)
 
-**重要**: 该文件约 **554 MB**，太大无法直接提交到 GitHub。
+**Important**: This file is about **554 MB** and is too large to commit to GitHub.
 
-**解决方案**:
-1. ✅ **已配置**: `.gitignore` 已排除 `*.dream3d` 文件
-2. ✅ **自动处理**: Git 会自动忽略该文件，不会上传
-3. ✅ **替代方案**: 用户可以使用 `toy_data_generator.py` 生成小测试文件
+**What’s in place**:
+1. ✅ **Configured**: `.gitignore` excludes `*.dream3d` files
+2. ✅ **Automatic**: Git will ignore the file and it will not be uploaded
+3. ✅ **Alternative**: Users can use `toy_data_generator.py` to generate small test files
 
-### 上传步骤
+### Upload steps
 
 ```bash
-# 1. 检查 Git 状态（确认 .dream3d 被忽略）
+# 1. Check Git status (confirm .dream3d is ignored)
 git status
-# 应该看不到 An0new6.dream3d
+# You should not see An0new6.dream3d
 
-# 2. 初始化仓库（如果还没有）
+# 2. Initialize repo (if not already)
 git init
 git branch -M main
 
-# 3. 添加文件
+# 3. Add files
 git add .
-git status  # 再次确认没有大文件
+git status  # Confirm no large files
 
-# 4. 创建初始提交
+# 4. Create initial commit
 git commit -m "feat: v1.0.0 - Professional refactoring release
 
 Complete repository structure with:
@@ -126,67 +126,66 @@ Complete repository structure with:
 - Programmatic API (pipeline.run)
 - Benchmarking infrastructure"
 
-# 5. 在 GitHub 创建仓库后，连接并推送
+# 5. After creating the repo on GitHub, add remote and push
 git remote add origin https://github.com/YOUR_USERNAME/EXPoly.git
 git push -u origin main
 ```
 
-### 验证上传
+### After uploading
 
-上传后，确认：
-- ✅ 所有代码文件都在
-- ✅ 所有文档都在
-- ✅ `.dream3d` 文件**不在**仓库中（这是正确的）
-- ✅ `.gitignore` 文件存在
+Confirm that:
+- ✅ All code files are present
+- ✅ All documentation is present
+- ✅ `.dream3d` files are **not** in the repo (this is correct)
+- ✅ `.gitignore` exists
 
-## 📝 文件清单
+## 📝 File checklist
 
-### 应该上传的文件（< 5 MB 总计）
+### Files to upload (< 5 MB total)
 
-**源代码**:
-- `src/expoly/*.py` (8 个文件)
+**Source code**:
+- `src/expoly/*.py` (8 files)
 
-**测试**:
-- `tests/*.py` (5 个文件)
+**Tests**:
+- `tests/*.py` (5 files)
 
-**文档**:
+**Documentation**:
 - `README.md`
 - `CHANGELOG.md`
-- `CITATION.cff`
 - `CONTRIBUTING.md`
 - `LICENSE`
-- `docs/*.md` (2 个文件)
+- `docs/*.md` (2 files)
 
-**配置**:
+**Configuration**:
 - `pyproject.toml`
 - `.gitignore`
 - `.github/workflows/tests.yml`
 
-**示例和基准**:
-- `examples/*.py` (2 个文件)
-- `benchmarks/*.py` (2 个文件)
+**Examples and benchmarks**:
+- `examples/*.py` (2 files)
+- `benchmarks/*.py` (2 files)
 
-### 不应该上传的文件（已排除）
+### Files that should not be uploaded (excluded)
 
-- ❌ `An0new6.dream3d` (554 MB - 太大)
-- ❌ `__pycache__/` (Python 缓存)
-- ❌ `*.egg-info/` (构建文件)
-- ❌ `.venv/` (虚拟环境)
-- ❌ `runs/` (输出目录)
+- ❌ `An0new6.dream3d` (554 MB – too large)
+- ❌ `__pycache__/` (Python cache)
+- ❌ `*.egg-info/` (build artifacts)
+- ❌ `.venv/` (virtual environment)
+- ❌ `runs/` (output directory)
 
-## 🎯 下一步
+## 🎯 Next steps
 
-1. ✅ **验证本地**: 运行测试和示例
-2. ⏭️ **初始化 Git**: `git init` (如果还没有)
-3. ⏭️ **创建 GitHub 仓库**: 在 GitHub 上创建新仓库
-4. ⏭️ **推送代码**: `git push`
-5. ⏭️ **处理 sample 文件**: 
-   - 选项 A: 保持排除（推荐，用户自己提供数据）
-   - 选项 B: 使用 Git LFS（如果必须包含）
-   - 选项 C: 上传到 GitHub Releases
+1. ✅ **Verify locally**: Run tests and examples
+2. ⏭️ **Initialize Git**: `git init` (if needed)
+3. ⏭️ **Create GitHub repo**: Create a new repository on GitHub
+4. ⏭️ **Push**: `git push`
+5. ⏭️ **Sample data**:
+   - Option A: Keep excluded (recommended; users provide their own data)
+   - Option B: Use Git LFS if you need to include it
+   - Option C: Host on GitHub Releases
 
-## 📚 相关文档
+## 📚 Related docs
 
-- `GITHUB_SETUP.md` - 详细的 GitHub 设置指南
-- `FILE_CHECKLIST.md` - 完整的文件检查清单
-- `README.md` - 主文档（包含所有使用说明）
+- `GITHUB_SETUP.md` – GitHub setup guide
+- `FILE_CHECKLIST.md` – Full file checklist
+- `README.md` – Main documentation and usage
