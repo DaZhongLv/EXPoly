@@ -450,7 +450,20 @@ expoly voronoi \
   --voxel-size 2.0
 ```
 
-This generates `voro_test.csv` with voxelized grain boundary topology data.
+**One-shot option**: To run the full Voronoi refinement in a single command (run → voronoi → run with CSV), use `--generate-voronoi` and optionally `--voronoi-voxel-size`:
+
+```bash
+expoly run \
+  --dream3d An0new6.dream3d \
+  --hx 0:119 --hy 0:119 --hz 0:75 \
+  --lattice FCC --ratio 2 --lattice-constant 3.524 \
+  --h5-grain-dset FeatureIds --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS \
+  --generate-voronoi --voronoi-voxel-size 2.0
+```
+
+That produces `voronoi.csv` in the run directory and runs a second pass with it to get the final atomistic structure. The manual two-step flow above yields `voro_test.csv` (or your chosen output path) for inspection or custom reuse.
 
 **Sample data**: Sample Dream3D files are typically large (100+ MB) and are excluded from Git via `.gitignore`. To get sample data:
 

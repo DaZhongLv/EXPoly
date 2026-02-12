@@ -499,7 +499,7 @@ def build_final_dump_with_grain(
 
     if len(xyz) != atom_num:
         raise RuntimeError(
-            "build_final_dump_with_grain: parsed atom count mismatch: " f"{len(xyz)} vs {atom_num}"
+            f"build_final_dump_with_grain: parsed atom count mismatch: {len(xyz)} vs {atom_num}"
         )
 
     xyz = np.asarray(xyz, dtype=float)
@@ -524,7 +524,7 @@ def build_final_dump_with_grain(
         # ---- Data rows: renumber id = 1..N ----
         new_id = 1
         for t, (x, y, z), gid in zip(types, xyz, grain_ids):
-            f.write(f"{new_id:d} {int(t):d} " f"{x:.10g} {y:.10g} {z:.10g} {int(gid):d}\n")
+            f.write(f"{new_id:d} {int(t):d} {x:.10g} {y:.10g} {z:.10g} {int(gid):d}\n")
             new_id += 1
 
     logger.info(

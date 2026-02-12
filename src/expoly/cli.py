@@ -133,7 +133,7 @@ def _build_frame_for_carve(
         else:
             if not Path(voxel_csv).exists():
                 raise FileNotFoundError(
-                    f"Voxel CSV file not found: {voxel_csv}. " f"Please check the file path."
+                    f"Voxel CSV file not found: {voxel_csv}. Please check the file path."
                 )
             # Voxel-CSV + HDF5 combination
             return VoxelCSVFrame(
@@ -485,7 +485,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--h5-grain-dset",
         type=str,
         default=None,
-        help="Name of grain-ID dataset in HDF5 (default: FeatureIds). " "Example: GrainID",
+        help="Name of grain-ID dataset in HDF5 (default: FeatureIds). Example: GrainID",
     )
     input_group.add_argument(
         "--h5-euler-dset",
@@ -503,8 +503,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--h5-neighborlist-dset",
         type=str,
         default=None,
-        help="Name of NeighborList dataset in HDF5 (default: NeighborList). "
-        "Example: NeighborList2",
+        help="Name of NeighborList dataset in HDF5 (default: NeighborList). Example: NeighborList2",
     )
     input_group.add_argument(
         "--h5-dimensions-dset",
@@ -546,7 +545,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--ratio",
         type=float,
         default=1.5,
-        help="Lattice-to-voxel scale ratio (default: 1.5). " "Larger ratio → smaller grain size",
+        help="Lattice-to-voxel scale ratio (default: 1.5). Larger ratio → smaller grain size",
     )
     carve_group.add_argument(
         "--lattice-constant",
@@ -615,13 +614,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write additional final.dump with per-atom grain-ID",
     )
+    output_group.add_argument(
+        "--generate-voronoi",
+        action="store_true",
+        help="One-shot Voronoi refinement: run carve+polish → extract Voronoi CSV → run again with that CSV. "
+        "Skips manual 'expoly voronoi' and second 'expoly run --voxel-csv'. Uses --voronoi-voxel-size for the middle step.",
+    )
+    output_group.add_argument(
+        "--voronoi-voxel-size",
+        type=float,
+        default=2.0,
+        help="Voxel size for Voronoi step when using --generate-voronoi (default: 2.0)",
+    )
 
     # General options
     r.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
     # ==================== voronoi command ====================
-    v = sub.add_parser("voronoi", help="Extract GB topology from LAMMPS dump and generate voxel_all.csv")
-    v.add_argument("--dump", type=Path, required=True, help="Path to LAMMPS dump file (one timestep)")
+    v = sub.add_parser(
+        "voronoi", help="Extract GB topology from LAMMPS dump and generate voxel_all.csv"
+    )
+    v.add_argument(
+        "--dump", type=Path, required=True, help="Path to LAMMPS dump file (one timestep)"
+    )
     v.add_argument(
         "--output",
         type=Path,
@@ -636,8 +651,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Crop ratio per side (default 0.015)",
     )
     v.add_argument("--k", type=int, default=25, help="k-NN for classification (default 25)")
-    v.add_argument("--min-other-atoms", type=int, default=4, help="Min other-grain neighbors (default 4)")
-    v.add_argument("--voxel-size", type=float, default=2.0, dest="voxel_size", help="Voxel size (default 2.0)")
+    v.add_argument(
+        "--min-other-atoms", type=int, default=4, help="Min other-grain neighbors (default 4)"
+    )
+    v.add_argument(
+        "--voxel-size", type=float, default=2.0, dest="voxel_size", help="Voxel size (default 2.0)"
+    )
     v.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # ==================== doctor command ====================
@@ -692,10 +711,11 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def run_noninteractive(ns: argparse.Namespace) -> int:
+def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> int:
     _init_logging(ns.verbose)
 
-    run_dir = _mk_run_dir(ns.outdir)
+    if run_dir is None:
+        run_dir = _mk_run_dir(ns.outdir)
     (hx0, hx1), (hy0, hy1), (hz0, hz1) = ns.hx, ns.hy, ns.hz
 
     # 1) carve (extendable)
@@ -952,11 +972,31 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(f"\nUnexpected error parsing arguments: {type(e).__name__}: {e}", file=sys.stderr)
         print(f"Command line args: {sys.argv}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         parser.print_help()
         return 2
 
     if ns.command == "run":
+        if getattr(ns, "generate_voronoi", False):
+            run_dir = _mk_run_dir(ns.outdir)
+            old_final_grain = ns.final_with_grain
+            ns.voxel_csv = None
+            ns.final_with_grain = True
+            run_noninteractive(ns, run_dir=run_dir)
+            voronoi_csv = run_dir / "voronoi.csv"
+            voronoi_run(
+                dump_path=run_dir / "final.dump",
+                output_path=voronoi_csv,
+                crop_ratio=0.015,
+                k=25,
+                min_other_atoms=4,
+                voxel_size=float(getattr(ns, "voronoi_voxel_size", 2.0)),
+            )
+            LOG.info("Voronoi CSV → %s; running second pass with --voxel-csv", voronoi_csv)
+            ns.voxel_csv = voronoi_csv
+            ns.final_with_grain = old_final_grain
+            return run_noninteractive(ns, run_dir=run_dir)
         return run_noninteractive(ns)
     elif ns.command == "voronoi":
         return voronoi_command(ns)

@@ -4,6 +4,7 @@ Extract GB surface / triple line / quadruple point topology from a LAMMPS dump,
 build Voronoi mesh (pair_to_mesh), voxelize grains, and output voxel_all.csv
 with 0-based integer grid coordinates.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -197,23 +198,18 @@ def build_quad_unique(point_all: pd.DataFrame) -> pd.DataFrame:
         )
 
     point_all["quad_id"] = point_all.apply(make_quad_id, axis=1)
-    quad_group = (
-        point_all.groupby("quad_id", as_index=False)
-        .agg(
-            {
-                "X": "mean",
-                "Y": "mean",
-                "Z": "mean",
-                "grain-ID": "first",
-                "outer1": "first",
-                "outer2": "first",
-                "outer3": "first",
-            }
-        )
+    quad_group = point_all.groupby("quad_id", as_index=False).agg(
+        {
+            "X": "mean",
+            "Y": "mean",
+            "Z": "mean",
+            "grain-ID": "first",
+            "outer1": "first",
+            "outer2": "first",
+            "outer3": "first",
+        }
     )
-    quad_unique = quad_group.rename(
-        columns={"X": "X_mean", "Y": "Y_mean", "Z": "Z_mean"}
-    )
+    quad_unique = quad_group.rename(columns={"X": "X_mean", "Y": "Y_mean", "Z": "Z_mean"})
     quad_unique["quad_set"] = quad_unique["quad_id"].apply(lambda t: frozenset(t))
     return quad_unique
 
@@ -293,9 +289,7 @@ def build_pair_to_mesh(
     for pair in pairs_to_process:
         g1, g2 = pair
         node_idx = [
-            idx
-            for idx, q in enumerate(quad_ids)
-            if {g1, g2}.issubset(set(int(x) for x in q))
+            idx for idx, q in enumerate(quad_ids) if {g1, g2}.issubset(set(int(x) for x in q))
         ]
         if len(node_idx) < 3:
             continue
@@ -402,7 +396,12 @@ def voxelize_grain_on_integer_grid(
 
     def align_range(i_min: float, i_max: float, step: int) -> np.ndarray:
         if step <= 1:
-            return np.arange(int(np.floor(i_min)) - margin_nvox, int(np.ceil(i_max)) + margin_nvox + 1, 1, dtype=int)
+            return np.arange(
+                int(np.floor(i_min)) - margin_nvox,
+                int(np.ceil(i_max)) + margin_nvox + 1,
+                1,
+                dtype=int,
+            )
         start = ((int(np.floor(i_min)) - margin_nvox) + step - 1) // step * step
         end = (int(np.ceil(i_max)) + margin_nvox) // step * step
         if start > end:
@@ -512,12 +511,17 @@ def run(
     z_in_min = zmin + crop_ratio * Lz
     z_in_max = zmax - crop_ratio * Lz
     mask_inner = (
-        (DATA["X"] >= x_in_min) & (DATA["X"] <= x_in_max)
-        & (DATA["Y"] >= y_in_min) & (DATA["Y"] <= y_in_max)
-        & (DATA["Z"] >= z_in_min) & (DATA["Z"] <= z_in_max)
+        (DATA["X"] >= x_in_min)
+        & (DATA["X"] <= x_in_max)
+        & (DATA["Y"] >= y_in_min)
+        & (DATA["Y"] <= y_in_max)
+        & (DATA["Z"] >= z_in_min)
+        & (DATA["Z"] <= z_in_max)
     )
     mask_outer = ~mask_inner
-    logger.info("atoms: total=%d, inner=%d, outer=%d", len(DATA), mask_inner.sum(), mask_outer.sum())
+    logger.info(
+        "atoms: total=%d, inner=%d, outer=%d", len(DATA), mask_inner.sum(), mask_outer.sum()
+    )
 
     DATA_mod = DATA.copy()
     G_xmin, G_xmax, G_ymin, G_ymax, G_zmin, G_zmax = assign_outer_shell_to_face_grains(
@@ -542,7 +546,9 @@ def run(
         S_min = quad_pos.min(axis=0) * 0.95
         S_min_global = S_min.copy()
 
-        pair_to_mesh = build_pair_to_mesh(surface_all, line_all, quad_unique, segments_df, voxel_size)
+        pair_to_mesh = build_pair_to_mesh(
+            surface_all, line_all, quad_unique, segments_df, voxel_size
+        )
         pair_to_mesh_shift = {}
         for pair, patches in pair_to_mesh.items():
             new_patches = []
@@ -571,7 +577,9 @@ def run(
             center_world = pts.mean(axis=0)
             center_shift = center_world - S_min_global
             grain_centers[g] = center_shift
-        logger.info("[grain_centers] real grains=%d, with centers=%d", len(real_grains), len(grain_centers))
+        logger.info(
+            "[grain_centers] real grains=%d, with centers=%d", len(real_grains), len(grain_centers)
+        )
 
         idx_by_gid = {}
         centers_by_gid = {}
@@ -644,7 +652,9 @@ def main(argv: List[str] | None = None) -> int:
         description="Extract GB topology from LAMMPS dump and generate voxel_all.csv with 0-based grid.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--dump", type=Path, required=True, help="Path to LAMMPS dump file (one timestep)")
+    parser.add_argument(
+        "--dump", type=Path, required=True, help="Path to LAMMPS dump file (one timestep)"
+    )
     parser.add_argument(
         "--output",
         type=Path,
