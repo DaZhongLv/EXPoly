@@ -18,9 +18,10 @@ pip install -e .
 # Run (using An0new6.dream3d as example)
 expoly run \
   --dream3d An0new6.dream3d \
-  --hx 0:100 --hy 0:100 --hz 0:100 \
+  --hx 100:180 --hy 100:180 --hz 10:60 \
   --lattice FCC --ratio 1.5 \
   --lattice-constant 3.524 \
+  --workers 2 \
   --h5-grain-dset FeatureIds \
   --h5-euler-dset EulerAngles \
   --h5-numneighbors-dset NumNeighbors \
@@ -139,9 +140,10 @@ The pipeline computes per-grain average Euler angles to orient lattices.
 ```bash
 expoly run \
   --dream3d An0new6.dream3d \
-  --hx 0:50 --hy 0:50 --hz 0:50 \
+  --hx 100:180 --hy 100:180 --hz 10:60 \
   --lattice FCC --ratio 1.5 \
   --lattice-constant 3.524 \
+  --workers 2 \
   --h5-grain-dset FeatureIds \
   --h5-euler-dset EulerAngles \
   --h5-numneighbors-dset NumNeighbors \
@@ -177,7 +179,7 @@ expoly run \
   [--lattice {FCC,BCC,DIA}]     # Default: FCC (FCC=Face-Centered cubic, BCC=Body-Centered cubic, DIA=diamond)
   [--ratio <float>]             # Default: 1.5
   [--lattice-constant <float>]  # Required: Physical lattice constant (Å)
-  [--workers <int>]             # Default: auto (CPU cores)
+  [--workers <int>]             # Default: 2
   [--ovito-cutoff <float>]      # Default: 1.6 (safe for Ni FCC)
   [--atom-mass <float>]         # Default: 58.6934 (Ni)
   [--keep-tmp]                  # Keep intermediate files
@@ -218,8 +220,9 @@ This breaks the original grain ID ↔ orientation correspondence while keeping t
 
 **Example command**:
 ```bash
-expoly run --dream3d An0new6.dream3d --hx 0:50 --hy 0:50 --hz 0:50 \
+expoly run --dream3d An0new6.dream3d --hx 100:180 --hy 100:180 --hz 10:60 \
   --lattice FCC --ratio 1.5 --lattice-constant 3.524 \
+  --workers 2 \
   --h5-grain-dset FeatureIds --h5-euler-dset EulerAngles \
   --h5-numneighbors-dset NumNeighbors --h5-neighborlist-dset NeighborList2 \
   --h5-dimensions-dset DIMENSIONS \
@@ -236,6 +239,66 @@ Nearest-neighbor distances (in units of lattice constant a):
 - **Diamond cubic**: a × √3 / 4 ≈ 0.4330 a
 
 The default cutoff (1.6) is safe for Ni with a=3.524 Å (FCC). Adjust `--ovito-cutoff` if needed.
+
+### Voronoi Topology Extraction
+
+The `voronoi` command extracts grain boundary (GB) topology from LAMMPS dump files and generates a voxelized representation:
+
+```bash
+expoly voronoi \
+  --dump final.dump \
+  --output voro_test.csv \
+  --voxel-size 2.0 \
+  --cube-ratio 0.015 \
+  --k 25 \
+  --min-other-atoms 4
+```
+
+**What This Does:**
+
+1. **Read LAMMPS dump** (`--dump`): Loads atom positions and grain IDs from a LAMMPS dump file (single timestep).
+
+2. **Crop inner box** (`--cube-ratio`): Removes a percentage of atoms from each side (default 0.015 = 1.5%) to focus on interior grain boundaries.
+
+3. **Classify topology** (`--k`, `--min-other-atoms`): 
+   - Identifies surface atoms (2 grain neighbors), triple-line atoms (3 grain neighbors), and quadruple-junction atoms (4 grain neighbors)
+   - Uses k-nearest neighbors (default k=25) for classification
+
+4. **Build Voronoi mesh**: Constructs grain boundary surfaces and triple-line segments from topology classification.
+
+5. **Voxelize grains** (`--voxel-size`): Converts grain volumes to voxel grids with specified voxel size (default 2.0 Å).
+
+6. **Output**: Generates `voxel_all.csv` with columns:
+   - `atom-ID`: Original atom ID from dump
+   - `grain-ID`: Grain identifier
+   - `voxel-X`, `voxel-Y`, `voxel-Z`: Integer grid coordinates (increment by 1, normalized by voxel-size)
+   - `phase`: Phase identifier
+   - `CI`: Confidence index
+
+**Voronoi Command Flags:**
+
+```bash
+expoly voronoi \
+  --dump <file>                    # Required: LAMMPS dump file path
+  --output <file>                   # Required: Output CSV path
+  [--voxel-size <float>]            # Default: 2.0 (voxel size in Å)
+  [--cube-ratio <float>]            # Default: 0.015 (crop ratio per side)
+  [--k <int>]                       # Default: 25 (k-NN for classification)
+  [--min-other-atoms <int>]         # Default: 4 (min other-grain neighbors)
+  [--verbose]                       # Verbose logging
+```
+
+**Example:**
+
+```bash
+# Extract topology from final.dump and generate voxelized output
+expoly voronoi \
+  --dump runs/expoly-1770883938/final.dump \
+  --output runs/expoly-1770883938/voro_test.csv \
+  --voxel-size 2.0
+```
+
+**Note**: The voxel coordinates (`voxel-X`, `voxel-Y`, `voxel-Z`) are normalized by `--voxel-size`, so they increment by 1 instead of by the voxel size value. For example, with `--voxel-size 2.0`, coordinates will be `0, 1, 2, 3...` instead of `0, 2, 4, 6...`.
 
 ---
 
@@ -360,6 +423,34 @@ Run examples:
 cd examples
 python minimal_example.py
 ```
+
+### Voronoi Topology Extraction Example
+
+After running the main pipeline to generate `final.dump`, you can extract GB topology:
+
+```bash
+# Step 1: Run main pipeline to generate final.dump
+expoly run \
+  --dream3d An0new6.dream3d \
+  --hx 0:119 --hy 0:119 --hz 0:75 \
+  --lattice FCC --ratio 2 \
+  --lattice-constant 3.524 \
+  --workers 3 \
+  --h5-grain-dset FeatureIds \
+  --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors \
+  --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS \
+  --final-with-grain
+
+# Step 2: Extract Voronoi topology from final.dump
+expoly voronoi \
+  --dump runs/expoly-<timestamp>/final.dump \
+  --output runs/expoly-<timestamp>/voro_test.csv \
+  --voxel-size 2.0
+```
+
+This generates `voro_test.csv` with voxelized grain boundary topology data.
 
 **Sample data**: Sample Dream3D files are typically large (100+ MB) and are excluded from Git via `.gitignore`. To get sample data:
 

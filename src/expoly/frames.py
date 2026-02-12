@@ -605,7 +605,7 @@ class VoxelCSVFrame(Frame):
         # ---------- 2. Read voxel-CSV and normalize coordinates to continuous indices ----------
         df = pd.read_csv(
             csv_path,
-            delim_whitespace=True,  # Key: space / any whitespace separator
+            sep=r'\s+',  # Key: space / any whitespace separator
             comment="#",
             engine="python",
         )

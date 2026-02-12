@@ -229,20 +229,20 @@ def ovito_delete_overlap_data(
     shuffle_seed: Optional[int] = None,
 ) -> None:
     """
-    Delete near-duplicates using OVITO: build graph of pairs within cutoff,
-    find connected components, keep one representative per component (min index;
-    optional shuffle then first-in-order for reproducibility).
+    Delete near-duplicates using OVITO: build graph of pairs within cutoff via
+    scipy cKDTree (no per-atom loop), connected components, one representative per
+    component (first in shuffle order); OVITO DeleteSelectedModifier does the removal.
 
     Outputs:
       - out_overlap_mask_path: selection mask (0=keep, 1=delete) or .npy array
       - out_psc_path: cleaned LAMMPS data file
     """
     try:
-        from ovito.data import CutoffNeighborFinder
         from ovito.io import export_file, import_file
         from ovito.modifiers import DeleteSelectedModifier
     except Exception as e:
         raise RuntimeError("ovito is required. Install it with `pip install ovito`.") from e
+    from scipy.spatial import cKDTree
     from scipy.sparse import csr_matrix
     from scipy.sparse.csgraph import connected_components
 
@@ -253,41 +253,39 @@ def ovito_delete_overlap_data(
     pipeline = import_file(str(in_lammps_path))
 
     def modifier(frame, data):
-        selection = data.particles_.create_property("Selection", data=0)
-        finder = CutoffNeighborFinder(float(cutoff), data)
         N = data.particles.count
+        # 1) Get positions (N, 3) for cKDTree
+        positions = np.asarray(data.particles["Position"][...], dtype=np.float64)
 
-        # 1) Build edge list (i, j) with i < j to avoid duplicates
-        edges_list: List[Tuple[int, int]] = []
-        for i in range(N):
-            for neigh in finder.find(i):
-                j = neigh.index
-                if i < j:
-                    edges_list.append((i, j))
-        if not edges_list:
-            return
-        edges = np.array(edges_list, dtype=np.intp)
+        # 2) Build edge list with cKDTree (no for-loop over atoms)
+        tree = cKDTree(positions)
+        pairs = tree.query_pairs(float(cutoff))
+        edges = np.array(list(pairs), dtype=np.intp) if pairs else np.zeros((0, 2), dtype=np.intp)
 
-        # 2) Connected components (undirected)
-        row = np.concatenate([edges[:, 0], edges[:, 1]])
-        col = np.concatenate([edges[:, 1], edges[:, 0]])
-        adj = csr_matrix((np.ones(len(row)), (row, col)), shape=(N, N))
-        n_comp, labels = connected_components(adj, directed=False)
+        # 3) Connected components (undirected)
+        if edges.shape[0] > 0:
+            row = np.concatenate([edges[:, 0], edges[:, 1]])
+            col = np.concatenate([edges[:, 1], edges[:, 0]])
+            adj = csr_matrix((np.ones(len(row)), (row, col)), shape=(N, N))
+            n_comp, labels = connected_components(adj, directed=False)
+        else:
+            n_comp, labels = N, np.arange(N, dtype=np.intp)
 
-        # 3) One representative per component: first in shuffle order
+        # 4) One representative per component: first in shuffle order
         rng = np.random.default_rng(None if shuffle_seed is None else int(shuffle_seed))
         order = np.arange(N)
         rng.shuffle(order)
-        first_in_order = np.full(n_comp, -1, dtype=np.intp)  # -1 = not yet seen
+        first_in_order = np.full(n_comp, -1, dtype=np.intp)
         for idx in order:
             c = labels[idx]
             if first_in_order[c] == -1:
                 first_in_order[c] = idx
         representatives = set(int(first_in_order[c]) for c in range(n_comp))
 
-        # 4) Mask: 0 = keep (representative), 1 = delete
-        for i in range(N):
-            selection[i] = 0 if i in representatives else 1
+        # 5) Selection: 0 = keep, 1 = delete (vectorized)
+        selection = np.ones(N, dtype=np.intp)
+        selection[np.fromiter(representatives, dtype=np.intp)] = 0
+        data.particles_.create_property("Selection", data=selection)
 
     pipeline.modifiers.append(modifier)
     data = pipeline.compute()

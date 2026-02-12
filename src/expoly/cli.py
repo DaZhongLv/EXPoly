@@ -14,6 +14,7 @@ import pandas as pd
 
 from expoly.carve import CarveConfig, process, process_extend
 from expoly.frames import Frame, VoxelCSVFrame
+from expoly.generate_voronoi import run as voronoi_run
 from expoly.polish import PolishConfig, polish_pipeline
 
 LOG = logging.getLogger("expoly.cli")
@@ -26,11 +27,15 @@ def _parse_range(s: str) -> Tuple[int, int]:
     """
     Parse 'a:b' (also tolerates '[a:b]', spaces, etc.) → (a, b), both int.
     """
-    s = s.strip().lstrip("[").rstrip("]").strip()
-    if ":" not in s:
-        raise argparse.ArgumentTypeError(f"Range must be like '0:50', got {s!r}")
-    a, b = s.split(":", 1)
-    return (int(a.strip()), int(b.strip()))
+    try:
+        s = s.strip().lstrip("[").rstrip("]").strip()
+        if ":" not in s:
+            raise argparse.ArgumentTypeError(f"Range must be like '0:50', got {s!r}")
+        a, b = s.split(":", 1)
+        result = (int(a.strip()), int(b.strip()))
+        return result
+    except Exception as e:
+        raise
 
 
 def _mk_run_dir(root: Path | None = None) -> Path:
@@ -47,20 +52,15 @@ def _init_logging(verbose: bool) -> None:
         level=level,
         format="%(levelname)s | %(name)s: %(message)s",
         force=True,  # Override any existing configuration
+        stream=sys.stdout,  # Ensure output goes to stdout
     )
     # Ensure output is flushed immediately (important for SLURM/supercomputers)
     # This ensures progress messages appear in SLURM output files in real-time
-    import sys
-
     if hasattr(sys.stdout, "reconfigure"):
         try:
             sys.stdout.reconfigure(line_buffering=True)
         except (AttributeError, ValueError):
             pass  # Fallback if reconfigure not available
-    # Ensure output is flushed immediately (important for SLURM/supercomputers)
-    import sys
-
-    sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, "reconfigure") else None
 
 
 # --------------------------- grain selection ---------------------------
@@ -141,6 +141,7 @@ def _build_frame_for_carve(
                 path=str(dream3d_path),
                 voxel_csv=str(voxel_csv),
                 h5_grain_dset=mapping["GrainId"],
+                mapping=mapping,
             )
     except KeyError as e:
         dataset_name = str(e).strip("'\"")
@@ -318,8 +319,6 @@ def _carve_all(
         # Optimized: batch compute all grain orientations at once using pandas groupby
         # Instead of calling search_avg_Euler 437 times (each scans entire fid array),
         # compute all averages in one pass
-        import pandas as pd
-
         mask_selected = np.isin(frame.fid, original_list)
         if np.any(mask_selected):
             df_euler = pd.DataFrame(
@@ -456,11 +455,16 @@ def _carve_all(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    def error_handler(message: str) -> None:
+        print(f"\nError: {message}", file=sys.stderr)
+        sys.exit(2)
+
     p = argparse.ArgumentParser(
         prog="expoly",
         description="EXPoly: Convert Dream3D voxel data to MD-ready atomistic structures (LAMMPS data files).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    p.error = error_handler
     sub = p.add_subparsers(dest="command", required=True, help="Available commands")
 
     # ==================== run command ====================
@@ -563,8 +567,8 @@ def build_parser() -> argparse.ArgumentParser:
     carve_group.add_argument(
         "--workers",
         type=int,
-        default=os.cpu_count() or 1,
-        help="Parallel workers for carving (default: CPU count)",
+        default=2,
+        help="Parallel workers for carving (default: 2)",
     )
     carve_group.add_argument(
         "--seed",
@@ -615,6 +619,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     # General options
     r.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+
+    # ==================== voronoi command ====================
+    v = sub.add_parser("voronoi", help="Extract GB topology from LAMMPS dump and generate voxel_all.csv")
+    v.add_argument("--dump", type=Path, required=True, help="Path to LAMMPS dump file (one timestep)")
+    v.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Output CSV path (e.g., check_large_voxel_from_mesh_what.csv)",
+    )
+    v.add_argument(
+        "--cube-ratio",
+        type=float,
+        default=0.015,
+        dest="crop_ratio",
+        help="Crop ratio per side (default 0.015)",
+    )
+    v.add_argument("--k", type=int, default=25, help="k-NN for classification (default 25)")
+    v.add_argument("--min-other-atoms", type=int, default=4, help="Min other-grain neighbors (default 4)")
+    v.add_argument("--voxel-size", type=float, default=2.0, dest="voxel_size", help="Voxel size (default 2.0)")
+    v.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # ==================== doctor command ====================
     d = sub.add_parser("doctor", help="Validate input files and configuration")
@@ -738,6 +763,21 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
     )
 
     LOG.info("All done. final → %s", final_path)
+    return 0
+
+
+def voronoi_command(ns: argparse.Namespace) -> int:
+    """Run Voronoi topology extraction from LAMMPS dump and generate voxel_all.csv."""
+    _init_logging(ns.verbose)
+    out = voronoi_run(
+        dump_path=ns.dump,
+        output_path=ns.output,
+        crop_ratio=getattr(ns, "crop_ratio", 0.015),
+        k=getattr(ns, "k", 25),
+        min_other_atoms=getattr(ns, "min_other_atoms", 4),
+        voxel_size=getattr(ns, "voxel_size", 2.0),
+    )
+    LOG.info("Voronoi output → %s", out)
     return 0
 
 
@@ -900,10 +940,27 @@ def doctor_command(ns: argparse.Namespace) -> int:
 def main(argv: Iterable[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    ns = parser.parse_args(argv)
+    try:
+        ns, unknown = parser.parse_known_args(argv)
+        if unknown:
+            print(f"\nError: unrecognized arguments: {' '.join(unknown)}", file=sys.stderr)
+            print(f"Full command line: {' '.join(sys.argv)}", file=sys.stderr)
+            parser.print_help()
+            return 2
+    except SystemExit as e:
+        return e.code if e.code is not None else 2
+    except Exception as e:
+        print(f"\nUnexpected error parsing arguments: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"Command line args: {sys.argv}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        parser.print_help()
+        return 2
 
     if ns.command == "run":
         return run_noninteractive(ns)
+    elif ns.command == "voronoi":
+        return voronoi_command(ns)
     elif ns.command == "doctor":
         return doctor_command(ns)
 
