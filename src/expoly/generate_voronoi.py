@@ -18,13 +18,13 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import Delaunay, cKDTree
 
+logger = logging.getLogger(__name__)
+
 try:
     from sklearn.decomposition import PCA
 except ImportError:
     PCA = None
     logger.warning("sklearn not available; pair_to_mesh building may fail")
-
-logger = logging.getLogger(__name__)
 
 PathLike = Union[str, Path]
 

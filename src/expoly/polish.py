@@ -8,6 +8,9 @@ from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
+from scipy.spatial import cKDTree
 
 logger = logging.getLogger(__name__)
 
@@ -242,9 +245,6 @@ def ovito_delete_overlap_data(
         from ovito.modifiers import DeleteSelectedModifier
     except Exception as e:
         raise RuntimeError("ovito is required. Install it with `pip install ovito`.") from e
-    from scipy.spatial import cKDTree
-    from scipy.sparse import csr_matrix
-    from scipy.sparse.csgraph import connected_components
 
     in_lammps_path = Path(in_lammps_path)
     out_overlap_mask_path = _ensure_parent(out_overlap_mask_path, True)

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -34,7 +33,7 @@ def _parse_range(s: str) -> Tuple[int, int]:
         a, b = s.split(":", 1)
         result = (int(a.strip()), int(b.strip()))
         return result
-    except Exception as e:
+    except Exception:
         raise
 
 
