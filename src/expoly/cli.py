@@ -45,6 +45,21 @@ def _mk_run_dir(root: Path | None = None) -> Path:
     return path
 
 
+def _voxel_csv_h_ranges(csv_path: Path) -> Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]:
+    """
+    Read a voxel CSV (e.g. voronoi.csv) and return H ranges that cover the full grid:
+    (0, max_x), (0, max_y), (0, max_z) so that VoxelCSVFrame indexing does not go out of bounds.
+    """
+    df = pd.read_csv(csv_path, sep=r"\s+", comment="#", engine="python")
+    for col in ["voxel-X", "voxel-Y", "voxel-Z"]:
+        if col not in df.columns:
+            raise KeyError(f"Voxel CSV missing column {col!r}: {csv_path}")
+    max_x = int(df["voxel-X"].max())
+    max_y = int(df["voxel-Y"].max())
+    max_z = int(df["voxel-Z"].max())
+    return (0, max_x), (0, max_y), (0, max_z)
+
+
 def _init_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -290,6 +305,7 @@ def _carve_all(
     h5_neighborlist_dset: str | None = None,
     h5_dimensions_dset: str | None = None,
     random_orientation: bool = False,
+    run_dir: Path | None = None,
 ) -> pd.DataFrame:
     frame = _build_frame_for_carve(
         dream3d,
@@ -304,21 +320,24 @@ def _carve_all(
     total_grains = len(gids)
     LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", total_grains, hx, hy, hz)
 
-    # Build grain→Euler override map for random-orientation mode
+    # Build grain→Euler override map for random-orientation mode (shuffle only among grains in H range)
     grain_euler_override: Dict[int, np.ndarray] | None = None
     if random_orientation:
-        LOG.info("[random-orientation] Building shuffled orientation mapping...")
-        # Original list: all selected grain IDs in order
+        LOG.info(
+            "[random-orientation] Shuffling orientations only among %d grains in H range (hx=%s hy=%s hz=%s)...",
+            total_grains,
+            hx,
+            hy,
+            hz,
+        )
+        # Original list: grain IDs in the selected H range only
         original_list = [int(g) for g in gids]
-        # Shuffled list: same IDs but shuffled
         shuffled_list = original_list.copy()
         rng = np.random.default_rng(seed)
         rng.shuffle(shuffled_list)
 
-        # Optimized: batch compute all grain orientations at once using pandas groupby
-        # Instead of calling search_avg_Euler 437 times (each scans entire fid array),
-        # compute all averages in one pass
         mask_selected = np.isin(frame.fid, original_list)
+        orientation_mapping_pairs: List[Tuple[int, int]] = []  # (grain_id, orientation_from_grain_id)
         if np.any(mask_selected):
             df_euler = pd.DataFrame(
                 {
@@ -330,16 +349,11 @@ def _carve_all(
             )
             grain_means = df_euler.groupby("grain_id")[["e1", "e2", "e3"]].mean()
 
-            # Build mapping: for each grain_id, find its position in shuffled_list,
-            # then use that position to get the grain_id from original_list,
-            # and get Euler angle from precomputed grain_means
             grain_euler_override = {}
             for grain_id in original_list:
-                # Find grain_id's position in shuffled_list
                 shuffled_index = shuffled_list.index(grain_id)
-                # Get the grain_id at that position in original_list
                 euler_source_grain_id = original_list[shuffled_index]
-                # Get Euler angle from precomputed means
+                orientation_mapping_pairs.append((grain_id, euler_source_grain_id))
                 if euler_source_grain_id in grain_means.index:
                     euler = grain_means.loc[euler_source_grain_id].values
                     grain_euler_override[grain_id] = euler.copy()
@@ -351,17 +365,25 @@ def _carve_all(
                     )
                     grain_euler_override[grain_id] = np.array([0.0, 0.0, 0.0], dtype=float)
         else:
-            # Fallback: no selected grains found
             LOG.warning("[random-orientation] No selected grains found in data")
             grain_euler_override = {
                 int(gid): np.array([0.0, 0.0, 0.0], dtype=float) for gid in original_list
             }
+            orientation_mapping_pairs = [(g, g) for g in original_list]
 
         LOG.info(
             "[random-orientation] Mapped %d grain orientations (seed=%s)",
             len(grain_euler_override),
             seed,
         )
+
+        if run_dir is not None and orientation_mapping_pairs:
+            mapping_path = run_dir / "random_orientation_mapping.txt"
+            with open(mapping_path, "w", encoding="utf-8") as f:
+                f.write("# grain_id  orientation_from_grain_id  (grain_id uses Euler angles of orientation_from_grain_id)\n")
+                for gid, src_gid in orientation_mapping_pairs:
+                    f.write(f"{gid}  {src_gid}\n")
+            LOG.info("[random-orientation] Mapping saved to %s", mapping_path)
 
     voxel_csv_str = str(voxel_csv) if voxel_csv is not None else None
     tasks = [
@@ -577,8 +599,9 @@ def build_parser() -> argparse.ArgumentParser:
     carve_group.add_argument(
         "--random-orientation",
         action="store_true",
-        help="Randomize grain orientations: shuffle grain IDs and reassign orientations. "
-        "Each grain ID gets a random orientation from the shuffled list. Use --seed for reproducibility.",
+        help="Randomize grain orientations only among grains in the selected H range (--hx/--hy/--hz). "
+        "Each grain in that range gets a random orientation from another grain in the same range. "
+        "Mapping is saved to random_orientation_mapping.txt in the run folder. Use --seed for reproducibility.",
     )
 
     # Polish group
@@ -737,6 +760,7 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
         h5_neighborlist_dset=getattr(ns, "h5_neighborlist_dset", None),
         h5_dimensions_dset=getattr(ns, "h5_dimensions_dset", None),
         random_orientation=getattr(ns, "random_orientation", False),
+        run_dir=run_dir,
     )
 
     raw_points_path = run_dir / "raw_points.parquet"
@@ -996,6 +1020,14 @@ def main(argv: Iterable[str] | None = None) -> int:
             LOG.info("Voronoi CSV → %s; running second pass with --voxel-csv", voronoi_csv)
             ns.voxel_csv = voronoi_csv
             ns.final_with_grain = old_final_grain
+            # Second pass uses voxel grid from CSV: set hx/hy/hz to CSV extent to avoid IndexError
+            (ns.hx, ns.hy, ns.hz) = _voxel_csv_h_ranges(voronoi_csv)
+            LOG.info(
+                "Second pass H ranges from voronoi grid: hx=%s hy=%s hz=%s",
+                ns.hx,
+                ns.hy,
+                ns.hz,
+            )
             return run_noninteractive(ns, run_dir=run_dir)
         return run_noninteractive(ns)
     elif ns.command == "voronoi":

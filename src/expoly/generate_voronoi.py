@@ -373,7 +373,6 @@ def voxelize_grain_on_integer_grid(
     """
     planes_g = collect_grain_planes(gid, pair_to_mesh_shift, grain_centers)
     if not planes_g:
-        logger.debug(f"[voxelize] grain {gid} has no planes")
         return None, None
     verts_all = []
     for (g1, g2), patches in pair_to_mesh_shift.items():
@@ -382,7 +381,6 @@ def voxelize_grain_on_integer_grid(
         for p in patches:
             verts_all.append(np.asarray(p["verts"], dtype=float))
     if not verts_all:
-        logger.debug(f"[voxelize] grain {gid} has no mesh vertices")
         return None, None
     verts_all = np.concatenate(verts_all, axis=0)
     vmin = verts_all.min(axis=0)
@@ -412,7 +410,6 @@ def voxelize_grain_on_integer_grid(
     iy_vals = align_range(iy_min_f, iy_max_f, index_step)
     iz_vals = align_range(iz_min_f, iz_max_f, index_step)
     if ix_vals.size == 0 or iy_vals.size == 0 or iz_vals.size == 0:
-        logger.debug(f"[voxelize] grain {gid} index range empty")
         return None, None
     IX, IY, IZ = np.meshgrid(ix_vals, iy_vals, iz_vals, indexing="ij")
     idx_all = np.stack([IX.ravel(), IY.ravel(), IZ.ravel()], axis=1)
@@ -429,7 +426,6 @@ def voxelize_grain_on_integer_grid(
             inside &= s >= 0
     idx_in = idx_all[inside]
     centers_in = centers_all[inside]
-    logger.debug(f"[voxelize] grain {gid}: candidates={len(idx_all)}, inside={len(idx_in)}")
     return idx_in, centers_in
 
 
@@ -453,7 +449,7 @@ def map_to_full_grid(
     ix_min, iy_min, iz_min = pts_exist_raw.min(axis=0)
     ix_max, iy_max, iz_max = pts_exist_raw.max(axis=0)
     logger.info(
-        "原始 index 范围: ix=%d→%d, iy=%d→%d, iz=%d→%d",
+        "Raw index range: ix=%d→%d, iy=%d→%d, iz=%d→%d",
         ix_raw.min(),
         ix_raw.max(),
         iy_raw.min(),
@@ -468,7 +464,7 @@ def map_to_full_grid(
     nx = ix0.max() + 1
     ny = iy0.max() + 1
     nz = iz0.max() + 1
-    logger.info("0-based 网格尺寸: nx=%d, ny=%d, nz=%d", nx, ny, nz)
+    logger.info("0-based grid dimensions: nx=%d, ny=%d, nz=%d", nx, ny, nz)
     grid_pts = np.array(
         list(itertools.product(range(nx), range(ny), range(nz))),
         dtype=np.intp,
@@ -479,7 +475,7 @@ def map_to_full_grid(
     voxel_full["voxel-X"] = (grid_pts[:, 0] * step).astype(int)
     voxel_full["voxel-Y"] = (grid_pts[:, 1] * step).astype(int)
     voxel_full["voxel-Z"] = (grid_pts[:, 2] * step).astype(int)
-    logger.info("完整长方体网格点数=%d, 原始 voxel 数=%d", len(grid_pts), len(voxel_all))
+    logger.info("Full rectangular grid points=%d, original voxel count=%d", len(grid_pts), len(voxel_all))
     return voxel_full
 
 
@@ -594,7 +590,6 @@ def run(
                 margin_nvox=1,
             )
             if idx_in is None or len(idx_in) == 0:
-                logger.debug(f"[skip] grain {gid} has no voxels")
                 continue
             idx_by_gid[gid] = idx_in
             centers_by_gid[gid] = centers_in
@@ -604,7 +599,7 @@ def run(
             raise RuntimeError("No voxels generated for any grain")
         all_idx = np.vstack(list(idx_by_gid.values()))
         global_min = all_idx.min(axis=0).astype(int)
-        logger.info("全局 index 最小值 global_min = %s", global_min)
+        logger.info("Global index minimum global_min = %s", global_min)
 
         rows = []
         atom_counter = 1
@@ -633,7 +628,7 @@ def run(
             by=["grain-ID", "voxel-X", "voxel-Y", "voxel-Z"],
             inplace=True,
         )
-        logger.info("最终 voxel_all 大小: %s", voxel_all.shape)
+        logger.info("Final voxel_all shape: %s", voxel_all.shape)
 
         voxel_all = map_to_full_grid(voxel_all, voxel_size)
 
@@ -643,7 +638,7 @@ def run(
     voxel_all["voxel-Z"] = (voxel_all["voxel-Z"] / voxel_size).astype(int)
 
     voxel_all.to_csv(output_path, sep=" ", index=False)
-    logger.info("完整 0-based 长方体网格文件已保存到: %s", output_path)
+    logger.info("Full 0-based rectangular grid file saved to: %s", output_path)
     return output_path
 
 
