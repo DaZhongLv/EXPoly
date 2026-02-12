@@ -304,7 +304,12 @@ EXPoly creates a new run directory: `runs/expoly-<timestamp>/`
    - **Cause**: Very large H ranges or many grains
    - **Solution**: Reduce H ranges, use `--workers 1` to reduce memory pressure, or process in chunks
 
-6. **Schema mismatch**
+6. **Very large HDF5 file + many workers**
+   - **Symptom**: Slow runs, swap, or OOM on HPC
+   - **Cause**: Each worker loads a full copy of the HDF5 data into memory. With 16 workers and a 2 GB file, that is ~32 GB RAM.
+   - **Solution**: Use **`--workers 1`** (or `--workers 2`) when the Dream3D file is very large. Fewer workers = less total memory; each worker still reuses its loaded data for all assigned grains.
+
+7. **Schema mismatch**
    - **Error**: `Unexpected GrainId ndim` or shape mismatches
    - **Cause**: HDF5 array dimensions don't match expected format
    - **Solution**: Check HDF5 structure, use `--h5-grain-dset` if dataset name differs

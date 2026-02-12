@@ -11,7 +11,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 authors = [{name="Meizhong Lyu"}]
 license = {text = "MIT"}
-dependencies = ["numpy","pandas","scipy","h5py", "ovito", "plotly"]
+dependencies = ["numpy", "pandas", "scipy", "h5py", "ovito", "plotly", "pyarrow"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0","pytest-cov","ruff","black","mypy", "plotly", "matplotlib"]

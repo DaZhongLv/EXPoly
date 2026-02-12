@@ -411,6 +411,11 @@ def _carve_all(
         LOG.info(
             "[carve] Each worker will load HDF5 file once and reuse it for all assigned grains"
         )
+        if workers > 1:
+            LOG.info(
+                "[carve] Note: Each worker loads a full copy of the HDF5 data. "
+                "If your HDF5 file is very large, use --workers 1 (or 2) to avoid high memory use."
+            )
         sys.stdout.flush()
         # Initialize each worker process with Frame loaded once (shared across tasks in that worker)
         init_args = (
@@ -690,9 +695,9 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
         random_orientation=getattr(ns, "random_orientation", False),
     )
 
-    raw_csv = run_dir / "raw_points.csv"
-    df_all.to_csv(raw_csv, header=False, index=False, sep=" ")
-    LOG.info("[done] raw points → %s (rows=%d)", raw_csv, len(df_all))
+    raw_points_path = run_dir / "raw_points.parquet"
+    df_all.to_parquet(raw_points_path, index=False)
+    LOG.info("[done] raw points → %s (rows=%d)", raw_points_path, len(df_all))
 
     # 2) polish (OVITO required)
     #    scan_ratio = lattice_constant / cube_ratio; here cube_ratio is --ratio
@@ -720,13 +725,13 @@ def run_noninteractive(ns: argparse.Namespace) -> int:
 
     paths = {
         "tmp_in": run_dir / "tmp_polish.in.data",
-        "ovito_mask": run_dir / "overlap_mask.txt",
+        "ovito_mask": run_dir / "overlap_mask.npy",
         "ovito_psc": run_dir / "ovito_cleaned.data",
         "final_lmp": run_dir / "final.data",
     }
 
     final_path = polish_pipeline(
-        raw_csv,
+        raw_points_path,
         pcfg,
         paths,
         final_with_grain=bool(ns.final_with_grain),

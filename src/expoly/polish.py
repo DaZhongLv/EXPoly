@@ -80,16 +80,26 @@ def _ensure_parent(path: PathLike, overwrite: bool = True) -> Path:
     return p
 
 
-def _load_raw_points(raw_csv: PathLike) -> pd.DataFrame:
+def _load_raw_points(raw_path: PathLike) -> pd.DataFrame:
     """
-    Read merged carved points (no header):
+    Read merged carved points. Supports .parquet (preferred) or .csv (no header):
       columns: X, Y, Z, HX, HY, HZ, margin-ID, grain-ID
     Force numeric & drop invalid rows to avoid dtype issues.
     """
-    df = pd.read_csv(raw_csv, header=None, sep=r"\s+", low_memory=False)
-    df.columns = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    path = Path(raw_path)
+    if path.suffix.lower() == ".parquet":
+        df = pd.read_parquet(path)
+        # Ensure expected column names and order
+        expected = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
+        for c in expected:
+            if c not in df.columns:
+                raise KeyError(f"Parquet missing column {c!r}; got {list(df.columns)}")
+        df = df[expected]
+    else:
+        df = pd.read_csv(raw_path, header=None, sep=r"\s+", low_memory=False)
+        df.columns = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     before = len(df)
     df = df.dropna().reset_index(drop=True)
     if len(df) < before:
@@ -193,19 +203,21 @@ def write_lammps_input_data(
     )
     logger.info("write_lammps_input_data: atoms=%d → %s", atom_num, out_in_path)
 
-    # Optional ID map
+    # Optional ID map (.parquet or legacy space-sep CSV)
     if out_id_path is not None:
         out_id_path = _ensure_parent(out_id_path, True)
-        cut[["id", "X", "Y", "Z", "margin-ID", "grain-ID"]].to_csv(
-            out_id_path, sep=" ", index=False, header=False
-        )
+        id_df = cut[["id", "X", "Y", "Z", "margin-ID", "grain-ID"]]
+        if str(out_id_path).endswith(".parquet"):
+            id_df.to_parquet(out_id_path, index=False)
+        else:
+            id_df.to_csv(out_id_path, sep=" ", index=False, header=False)
         logger.info("write_lammps_input_data: id map → %s", out_id_path)
 
     return atom_num, (xlo, xhi, ylo, yhi, zlo, zhi)
 
 
 # -----------------------------------------------------------------------------
-# 2) OVITO de-duplication (data -> data), shuffled order to avoid bias
+# 2) OVITO de-duplication (data -> data), connected-components (one per cluster)
 # -----------------------------------------------------------------------------
 
 
@@ -217,13 +229,12 @@ def ovito_delete_overlap_data(
     shuffle_seed: Optional[int] = None,
 ) -> None:
     """
-    Delete near-duplicates using OVITO, visiting atoms in a shuffled order:
-      - Iterate atoms in random order.
-      - If current atom finds a neighbor that is *not yet marked*, mark current atom for deletion.
-      - This keeps one atom from each close pair/cluster and avoids order bias.
+    Delete near-duplicates using OVITO: build graph of pairs within cutoff,
+    find connected components, keep one representative per component (min index;
+    optional shuffle then first-in-order for reproducibility).
 
     Outputs:
-      - out_overlap_mask_path: selection mask (0=keep, 1=delete)
+      - out_overlap_mask_path: selection mask (0=keep, 1=delete) or .npy array
       - out_psc_path: cleaned LAMMPS data file
     """
     try:
@@ -232,6 +243,8 @@ def ovito_delete_overlap_data(
         from ovito.modifiers import DeleteSelectedModifier
     except Exception as e:
         raise RuntimeError("ovito is required. Install it with `pip install ovito`.") from e
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
 
     in_lammps_path = Path(in_lammps_path)
     out_overlap_mask_path = _ensure_parent(out_overlap_mask_path, True)
@@ -240,35 +253,53 @@ def ovito_delete_overlap_data(
     pipeline = import_file(str(in_lammps_path))
 
     def modifier(frame, data):
-        # Create 'Selection' (0=keep, 1=delete)
         selection = data.particles_.create_property("Selection", data=0)
         finder = CutoffNeighborFinder(float(cutoff), data)
-
-        # shuffled order
         N = data.particles.count
-        order = np.arange(N)
-        rng = np.random.default_rng(None if shuffle_seed is None else int(shuffle_seed))
-        rng.shuffle(order)
 
-        for k, index in enumerate(order):
-            # already marked? skip
-            if selection[index] != 0:
-                continue
-            # find any unmarked neighbor → mark current
-            for neigh in finder.find(index):
-                if selection[neigh.index] == 0:
-                    selection[index] = 1
-                    break
+        # 1) Build edge list (i, j) with i < j to avoid duplicates
+        edges_list: List[Tuple[int, int]] = []
+        for i in range(N):
+            for neigh in finder.find(i):
+                j = neigh.index
+                if i < j:
+                    edges_list.append((i, j))
+        if not edges_list:
+            return
+        edges = np.array(edges_list, dtype=np.intp)
+
+        # 2) Connected components (undirected)
+        row = np.concatenate([edges[:, 0], edges[:, 1]])
+        col = np.concatenate([edges[:, 1], edges[:, 0]])
+        adj = csr_matrix((np.ones(len(row)), (row, col)), shape=(N, N))
+        n_comp, labels = connected_components(adj, directed=False)
+
+        # 3) One representative per component: first in shuffle order
+        rng = np.random.default_rng(None if shuffle_seed is None else int(shuffle_seed))
+        order = np.arange(N)
+        rng.shuffle(order)
+        first_in_order = np.full(n_comp, -1, dtype=np.intp)  # -1 = not yet seen
+        for idx in order:
+            c = labels[idx]
+            if first_in_order[c] == -1:
+                first_in_order[c] = idx
+        representatives = set(int(first_in_order[c]) for c in range(n_comp))
+
+        # 4) Mask: 0 = keep (representative), 1 = delete
+        for i in range(N):
+            selection[i] = 0 if i in representatives else 1
 
     pipeline.modifiers.append(modifier)
     data = pipeline.compute()
 
-    # Export mask
     mask = data.particles["Selection"][...]
-    np.savetxt(out_overlap_mask_path, mask, fmt="%d", delimiter=",")
+    # Save as .npy when path has .npy extension, else CSV for backward compatibility
+    if str(out_overlap_mask_path).endswith(".npy"):
+        np.save(out_overlap_mask_path, mask, allow_pickle=False)
+    else:
+        np.savetxt(out_overlap_mask_path, mask, fmt="%d", delimiter=",")
     logger.info("ovito_delete_overlap_data: mask → %s", out_overlap_mask_path)
 
-    # Remove and write cleaned data
     pipeline.modifiers.append(DeleteSelectedModifier(operate_on={"particles"}))
     export_file(pipeline, str(out_psc_path), "lammps/data")
     logger.info("ovito_delete_overlap_data: cleaned data → %s", out_psc_path)
@@ -340,8 +371,23 @@ def build_final_data_from_ovito_atoms(
       - Optionally append per-atom grain-ID as an extra column (if `grain_ids` is not None).
     """
     atoms_lines = _extract_atoms_lines_from_data(ovito_clean_path)
-    xyz = _parse_xyz_from_atoms_lines(atoms_lines)
-    atom_num = len(atoms_lines)
+    types_list: List[int] = []
+    xyz_list: List[Tuple[float, float, float]] = []
+    for ln in atoms_lines:
+        parts = ln.split()
+        if len(parts) < 5:
+            continue
+        try:
+            types_list.append(int(parts[1]))
+            xyz_list.append((float(parts[2]), float(parts[3]), float(parts[4])))
+        except (ValueError, IndexError):
+            continue
+    atom_num = len(types_list)
+    if atom_num == 0:
+        raise RuntimeError("No atoms lines parsed from OVITO output.")
+    types = np.array(types_list, dtype=np.intp)
+    xyz = np.array(xyz_list, dtype=float)
+    new_ids = np.arange(1, atom_num + 1, dtype=np.int64)
 
     # If grain_ids is provided, check length consistency; otherwise disable.
     if grain_ids is not None:
@@ -384,21 +430,17 @@ def build_final_data_from_ovito_atoms(
     else:
         header += "\n"
 
+    body = np.column_stack([new_ids, types, xyz])
+    if grain_ids is not None:
+        body = np.column_stack([body, grain_ids])
+
     final_data_path = _ensure_parent(final_data_path, True)
     with open(final_data_path, "w", encoding="utf-8") as f:
         f.write(header)
-        new_id = 1
-        for idx, ln in enumerate(atoms_lines):
-            parts = ln.split()
-            if len(parts) < 5:
-                continue
-            # Renumber id; keep type and XYZ from OVITO
-            parts[0] = str(new_id)
-            line = " ".join(parts[:5])
-            if grain_ids is not None:
-                line += f" {int(grain_ids[idx])}"
-            f.write(line + "\n")
-            new_id += 1
+        if grain_ids is not None:
+            np.savetxt(f, body, fmt="%d %d %.10g %.10g %.10g %d", delimiter=" ")
+        else:
+            np.savetxt(f, body, fmt="%d %d %.10g %.10g %.10g", delimiter=" ")
 
     logger.info(
         "build_final_data_from_ovito_atoms: final data → %s (atoms=%d, with_grain=%s)",
@@ -545,8 +587,8 @@ def polish_pipeline(
     tmp_in, ovito_mask, ovito_psc, final_out = _resolve_pipeline_paths(paths)
 
     # 1) Pre-OVITO data
-    #    Also write id mapping: id X Y Z margin-ID grain-ID
-    id_map_path = ovito_mask.with_suffix(".ids.txt")
+    #    Also write id mapping: id X Y Z margin-ID grain-ID (.parquet or legacy .ids.txt)
+    id_map_path = paths.get("id_map") or (ovito_mask.parent / "ids.parquet")
     atom_num0, box0 = write_lammps_input_data(
         raw_csv,
         cfg,
@@ -568,15 +610,21 @@ def polish_pipeline(
     grain_ids_final = None
     if final_with_grain:
         try:
-            # Read id map: id X Y Z margin-ID grain-ID
-            id_df = pd.read_csv(
-                id_map_path,
-                sep=r"\s+",
-                header=None,
-                names=["id", "X", "Y", "Z", "margin-ID", "grain-ID"],
-            )
-            # Read mask: 0=keep, 1=delete
-            mask_arr = np.loadtxt(ovito_mask, dtype=int, delimiter=",")
+            # Read id map: id X Y Z margin-ID grain-ID (.parquet or legacy CSV)
+            if str(id_map_path).endswith(".parquet"):
+                id_df = pd.read_parquet(id_map_path)
+            else:
+                id_df = pd.read_csv(
+                    id_map_path,
+                    sep=r"\s+",
+                    header=None,
+                    names=["id", "X", "Y", "Z", "margin-ID", "grain-ID"],
+                )
+            # Read mask: 0=keep, 1=delete (.npy or legacy CSV)
+            if str(ovito_mask).endswith(".npy"):
+                mask_arr = np.load(ovito_mask, allow_pickle=False)
+            else:
+                mask_arr = np.loadtxt(ovito_mask, dtype=int, delimiter=",")
             if mask_arr.ndim != 1:
                 mask_arr = mask_arr.reshape(-1)
 
