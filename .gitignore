@@ -36,3 +36,28 @@ QUICK_TEST*.sh
 REMOVE_DOCS*.md
 TEST_STATUS.md
 remove_internal_docs.sh
+
+# Cursor / IDE
+.cursor/
+
+# Blender / visualization (local workflows, not part of core repo)
+BLENDER_*.md
+EXTRACT_GEOMETRY_NODES.md
+PARAVIEW_INSTALL.md
+PYVISTA_*.md
+UPDATE_BLEND_FILE.md
+VISUALIZATION_README.md
+blender_*.py
+export_grain_points.py
+*.blend
+*.blend1
+
+# Notebooks (local experiments)
+*.ipynb
+
+# Local outputs / samples
+*.ply
+*.xyz
+grain_*_mesh.png
+grain_*_render*.blend
+grain_*_render*.blend1
