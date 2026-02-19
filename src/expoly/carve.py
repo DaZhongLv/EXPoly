@@ -216,7 +216,7 @@ def carve_points(
     tree_H = spatial.cKDTree(out_df[["HX", "HY", "HZ"]].to_numpy())
     tree_C = spatial.cKDTree(tr_pts)
     idx_lists = tree_H.query_ball_tree(tree_C, r=float(cfg.ci_radius))
-    keep_idx = np.unique([j for row in idx_lists for j in row])
+    keep_idx = np.unique([j for row in idx_lists for j in row]).astype(np.intp)
     kept = np.take(tr_pts, keep_idx, axis=0)
     logger.info(
         "carve_points: kept %d/%d in %.3fs", len(kept), len(tr_pts), time.process_time() - t0
