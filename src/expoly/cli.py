@@ -337,7 +337,9 @@ def _carve_all(
         rng.shuffle(shuffled_list)
 
         mask_selected = np.isin(frame.fid, original_list)
-        orientation_mapping_pairs: List[Tuple[int, int]] = []  # (grain_id, orientation_from_grain_id)
+        orientation_mapping_pairs: List[
+            Tuple[int, int]
+        ] = []  # (grain_id, orientation_from_grain_id)
         if np.any(mask_selected):
             df_euler = pd.DataFrame(
                 {
@@ -380,7 +382,9 @@ def _carve_all(
         if run_dir is not None and orientation_mapping_pairs:
             mapping_path = run_dir / "random_orientation_mapping.txt"
             with open(mapping_path, "w", encoding="utf-8") as f:
-                f.write("# grain_id  orientation_from_grain_id  (grain_id uses Euler angles of orientation_from_grain_id)\n")
+                f.write(
+                    "# grain_id  orientation_from_grain_id  (grain_id uses Euler angles of orientation_from_grain_id)\n"
+                )
                 for gid, src_gid in orientation_mapping_pairs:
                     f.write(f"{gid}  {src_gid}\n")
             LOG.info("[random-orientation] Mapping saved to %s", mapping_path)

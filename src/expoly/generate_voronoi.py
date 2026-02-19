@@ -475,7 +475,9 @@ def map_to_full_grid(
     voxel_full["voxel-X"] = (grid_pts[:, 0] * step).astype(int)
     voxel_full["voxel-Y"] = (grid_pts[:, 1] * step).astype(int)
     voxel_full["voxel-Z"] = (grid_pts[:, 2] * step).astype(int)
-    logger.info("Full rectangular grid points=%d, original voxel count=%d", len(grid_pts), len(voxel_all))
+    logger.info(
+        "Full rectangular grid points=%d, original voxel count=%d", len(grid_pts), len(voxel_all)
+    )
     return voxel_full
 
 
