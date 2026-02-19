@@ -37,9 +37,9 @@ jobs:
         run: |
           ruff check src/expoly tests
 
-      - name: Formatting check (black)
+      - name: Formatting check (ruff format)
         run: |
-          black --check src/expoly tests
+          ruff format --check src/expoly tests
 
       - name: Run tests
         run: |
