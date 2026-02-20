@@ -232,6 +232,10 @@ def carve_gb_keep_m1(margin_df: pd.DataFrame, lattice_points: np.ndarray) -> pd.
     Keep lattice points whose rounded HXYZ fall on cells with margin-ID in {0, 2}.
     Returns DataFrame with columns ['X','Y','Z','HX','HY','HZ','margin-ID'].
     """
+    if lattice_points.size == 0:
+        return pd.DataFrame(
+            columns=["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID"]
+        )
 
     def round_to_cell(arr):
         return np.rint(arr)
