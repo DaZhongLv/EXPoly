@@ -55,6 +55,9 @@ export_grain_points.py
 # Notebooks (local experiments)
 *.ipynb
 
+# Web app precomputed data (keep .gitkeep)
+web_app/data/*.parquet
+
 # Local outputs / samples
 *.ply
 *.xyz

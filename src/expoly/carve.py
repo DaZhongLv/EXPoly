@@ -5,7 +5,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Sequence
+from typing import Dict, Iterator, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,8 +24,12 @@ __all__ = [
     "sc_to_dia",
     "move_to_center",
     "prepare_carve",
+    "prepare_carve_meta",
+    "iter_sc_box_chunks",
     "carve_points",
+    "carve_points_inverse_box",
     "carve_gb_keep_m1",
+    "maybe_make_frame_readonly",
     "process_pre",
     "process",
     "process_extend",
@@ -47,12 +51,15 @@ class CarveConfig:
     # --- backward-compat / still used by neighbor selection ---
     ci_radius: float = math.sqrt(2.0)  # radius (in H-units) to keep lattice pts near any H voxel
 
-    # randomization for the spherical SC seed grid
+    # randomization for the spherical SC seed grid (legacy ball path)
     random_center: bool = False  # deterministic coverage by default
     rng_seed: Optional[int] = None  # set to reproducible seed if random_center=True
 
     # for extended pipeline
     unit_extend_ratio: int = 3
+
+    # chunked inverse-box generation: cells per chunk along longest axis (conservative default)
+    chunk_cells: int = 32
 
 
 # ============================== Small utilities ===============================
@@ -111,6 +118,130 @@ def move_to_center(points: np.ndarray, center_xyz: Sequence[float]) -> np.ndarra
 
 
 # ============================ Core: prepare & carve ============================
+
+
+def prepare_carve_meta(
+    out_df: pd.DataFrame,
+    frame: Frame,
+    cfg: CarveConfig,
+    euler_override: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute rotation matrix R, grain center, and crystal-frame AABB for inverse-box carve.
+    Forward transform: pts_h = pts_c @ R.T + center  =>  inverse: vox_c = (vox_h - center) @ R.
+    Returns (R, center, mins_c, maxs_c) with pad = ci_radius + ratio applied to AABB.
+    """
+    if "ID" in out_df.columns:
+        grain_id = int(out_df["ID"].iloc[0])
+    elif "grain-ID" in out_df.columns:
+        grain_id = int(out_df["grain-ID"].iloc[0])
+    else:
+        raise ValueError("out_df must contain 'ID' or 'grain-ID'.")
+
+    if euler_override is not None:
+        avg_eul = np.asarray(euler_override, dtype=float).reshape(3)
+    else:
+        avg_eul = frame.search_avg_Euler(grain_id)
+    R = general_func.eul2rot_bunge(avg_eul)
+
+    hx_min, hx_max = float(out_df["HX"].min()), float(out_df["HX"].max())
+    hy_min, hy_max = float(out_df["HY"].min()), float(out_df["HY"].max())
+    hz_min, hz_max = float(out_df["HZ"].min()), float(out_df["HZ"].max())
+    center = np.array(
+        [0.5 * (hx_max + hx_min), 0.5 * (hy_max + hy_min), 0.5 * (hz_max + hz_min)],
+        dtype=float,
+    )
+
+    vox_h = out_df[["HX", "HY", "HZ"]].to_numpy(dtype=float)
+    vox_c = (vox_h - center) @ R
+    pad = float(cfg.ci_radius) + float(cfg.ratio)
+    mins_c = vox_c.min(axis=0) - pad
+    maxs_c = vox_c.max(axis=0) + pad
+    return R, center, mins_c, maxs_c
+
+
+def iter_sc_box_chunks(
+    mins_c: np.ndarray,
+    maxs_c: np.ndarray,
+    step: float,
+    chunk_cells: int,
+    axis: int,
+) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+    """
+    Yield (mins_slab, maxs_slab) for each slab along the given axis.
+    Each slab spans chunk_cells steps along that axis.
+    """
+    lo = float(mins_c[axis])
+    hi = float(maxs_c[axis])
+    n_cells = max(1, int(np.ceil((hi - lo) / step)))
+    n_chunks = max(1, (n_cells + chunk_cells - 1) // chunk_cells)
+    chunk_span = (hi - lo) / n_chunks
+    for i in range(n_chunks):
+        slab_lo = lo + i * chunk_span
+        slab_hi = lo + (i + 1) * chunk_span
+        mins_slab = mins_c.copy()
+        maxs_slab = maxs_c.copy()
+        mins_slab[axis] = slab_lo
+        maxs_slab[axis] = slab_hi
+        yield mins_slab, maxs_slab
+
+
+def _sc_grid_in_box(mins: np.ndarray, maxs: np.ndarray, step: float) -> np.ndarray:
+    """Simple-cubic grid points inside box [mins, maxs] with spacing step. Returns Nx3."""
+    axes = [
+        np.arange(mins[i], maxs[i] + 1e-9, step, dtype=float)
+        for i in range(3)
+    ]
+    if any(len(ax) == 0 for ax in axes):
+        return np.empty((0, 3), dtype=float)
+    grid = np.stack(np.meshgrid(axes[0], axes[1], axes[2], indexing="ij"), axis=-1)
+    return grid.reshape(-1, 3)
+
+
+def carve_points_inverse_box(
+    out_df: pd.DataFrame,
+    frame: Frame,
+    cfg: CarveConfig,
+    euler_override: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Inverse-rotate + oriented box + chunked generation. Kept points in H space, Nx3.
+    Uses tree_H.query(pts_h, k=1, distance_upper_bound=ci_radius) for filtering.
+    """
+    R, center, mins_c, maxs_c = prepare_carve_meta(
+        out_df, frame, cfg, euler_override=euler_override
+    )
+    axis = int(np.argmax(maxs_c - mins_c))
+    step = float(cfg.ratio)
+    chunk_cells = int(getattr(cfg, "chunk_cells", 32))
+
+    tree_H = spatial.cKDTree(out_df[["HX", "HY", "HZ"]].to_numpy(dtype=float))
+    kept_chunks: list = []
+    t0 = time.process_time()
+    total_candidates = 0
+
+    for mins_slab, maxs_slab in iter_sc_box_chunks(
+        mins_c, maxs_c, step, chunk_cells, axis
+    ):
+        sc_c = _sc_grid_in_box(mins_slab, maxs_slab, step)
+        if len(sc_c) == 0:
+            continue
+        lattice_c = _choose_lattice(sc_c, cfg.lattice, cfg.ratio)
+        pts_h = lattice_c @ R.T + center
+        total_candidates += len(pts_h)
+        dist, _ = tree_H.query(pts_h, k=1, distance_upper_bound=float(cfg.ci_radius))
+        keep_mask = np.isfinite(dist)
+        if np.any(keep_mask):
+            kept_chunks.append(pts_h[keep_mask])
+
+    kept = np.vstack(kept_chunks) if kept_chunks else np.empty((0, 3), dtype=float)
+    logger.info(
+        "carve_points_inverse_box: kept %d/%d in %.3fs",
+        len(kept),
+        total_candidates,
+        time.process_time() - t0,
+    )
+    return kept
 
 
 def _ball_grid(
@@ -207,21 +338,27 @@ def carve_points(
 ) -> np.ndarray:
     """
     Keep lattice points that lie within 'cfg.ci_radius' (in H space) of ANY voxel in 'out_df'.
-    Guarantees a volumetric cloud (not a thin slice).
+    Uses inverse-rotate + oriented box + chunked generation; KDTree filter via k=1 + distance_upper_bound.
     If euler_override is provided (Bunge Euler (3,)), it is used for rotation instead of frame.
     """
-    tr_pts = prepare_carve(out_df, frame, cfg, euler_override=euler_override)
-
-    t0 = time.process_time()
-    tree_H = spatial.cKDTree(out_df[["HX", "HY", "HZ"]].to_numpy())
-    tree_C = spatial.cKDTree(tr_pts)
-    idx_lists = tree_H.query_ball_tree(tree_C, r=float(cfg.ci_radius))
-    keep_idx = np.unique([j for row in idx_lists for j in row]).astype(np.intp)
-    kept = np.take(tr_pts, keep_idx, axis=0)
-    logger.info(
-        "carve_points: kept %d/%d in %.3fs", len(kept), len(tr_pts), time.process_time() - t0
+    return carve_points_inverse_box(
+        out_df, frame, cfg, euler_override=euler_override
     )
-    return kept
+
+
+def maybe_make_frame_readonly(frame: Frame) -> None:
+    """
+    Set Frame's large numpy arrays to read-only so that under fork(), copy-on-write
+    does not duplicate them when child processes only read. Shared are the loaded
+    arrays, not a live h5py file handle.
+    """
+    for name in ("GrainId", "Euler", "Num_NN", "Num_list", "Dimension", "fid", "eul"):
+        arr = getattr(frame, name, None)
+        if arr is not None and isinstance(arr, np.ndarray):
+            try:
+                arr.setflags(write=False)
+            except ValueError:
+                pass
 
 
 # ============================ Margin / GB filtering ============================

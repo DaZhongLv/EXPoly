@@ -26,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0","pytest-cov","ruff","black","mypy", "plotly", "matplotlib"]
+web = ["dash", "plotly", "uvicorn[standard]"]
 
 [project.scripts]
 expoly = "expoly.cli:main"

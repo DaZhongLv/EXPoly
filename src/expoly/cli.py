@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import multiprocessing as mp
 import sys
 import time
 from pathlib import Path
@@ -11,12 +12,37 @@ from typing import Dict, Iterable, List, Tuple
 import numpy as np
 import pandas as pd
 
-from expoly.carve import CarveConfig, process, process_extend
+from expoly.carve import (
+    CarveConfig,
+    maybe_make_frame_readonly,
+    process,
+    process_extend,
+)
 from expoly.frames import Frame, VoxelCSVFrame
 from expoly.generate_voronoi import run as voronoi_run
 from expoly.polish import PolishConfig, polish_pipeline
 
 LOG = logging.getLogger("expoly.cli")
+
+
+def get_mp_context(mp_start: str):
+    """
+    Return (context, use_fork_preload).
+    - auto: on Linux use fork (workers inherit memory, no HDF5 reload); else spawn.
+    - fork: use fork (Linux/SLURM: single Frame load in main, shared by workers).
+    - spawn: use spawn (each worker loads Frame via initializer).
+    When use_fork_preload is True, main must load frame once and set _worker_frame_cache
+    before creating the Pool; do not use initializer.
+    """
+    if mp_start == "spawn":
+        return mp.get_context("spawn"), False
+    if mp_start == "fork":
+        return mp.get_context("fork"), True
+    if mp_start == "auto":
+        if sys.platform.startswith("linux"):
+            return mp.get_context("fork"), True
+        return mp.get_context("spawn"), False
+    raise ValueError(f"mp_start must be 'auto'|'fork'|'spawn', got {mp_start!r}")
 
 
 # --------------------------- small helpers ---------------------------
@@ -306,7 +332,11 @@ def _carve_all(
     h5_dimensions_dset: str | None = None,
     random_orientation: bool = False,
     run_dir: Path | None = None,
+    mp_start: str = "auto",
 ) -> pd.DataFrame:
+    # Load Frame once in main process. Under fork (Linux/SLURM) workers inherit this
+    # copy; we make arrays read-only to avoid copy-on-write duplication. Shared are
+    # the loaded numpy arrays, not a live h5py file handle.
     frame = _build_frame_for_carve(
         dream3d,
         voxel_csv=voxel_csv,
@@ -316,6 +346,23 @@ def _carve_all(
         h5_neighborlist_dset=h5_neighborlist_dset,
         h5_dimensions_dset=h5_dimensions_dset,
     )
+    ctx, use_fork_preload = get_mp_context(mp_start)
+    if use_fork_preload:
+        maybe_make_frame_readonly(frame)
+    voxel_csv_str = str(voxel_csv) if voxel_csv is not None else None
+    _init_args = (
+        str(dream3d),
+        voxel_csv_str,
+        h5_grain_dset,
+        h5_euler_dset,
+        h5_numneighbors_dset,
+        h5_neighborlist_dset,
+        h5_dimensions_dset,
+    )
+    global _worker_frame_cache, _worker_frame_args
+    _worker_frame_cache = frame
+    _worker_frame_args = _init_args
+
     gids = _pick_grain_ids(frame, hx, hy, hz)
     total_grains = len(gids)
     LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", total_grains, hx, hy, hz)
@@ -389,7 +436,6 @@ def _carve_all(
                     f.write(f"{gid}  {src_gid}\n")
             LOG.info("[random-orientation] Mapping saved to %s", mapping_path)
 
-    voxel_csv_str = str(voxel_csv) if voxel_csv is not None else None
     tasks = [
         (
             int(g),
@@ -429,48 +475,65 @@ def _carve_all(
             sys.stdout.flush()  # Flush after each grain for SLURM visibility
         df_all = pd.concat(chunks, ignore_index=True)
     else:
-        import multiprocessing as mp
-
-        LOG.info("[carve] Processing %d grains with %d workers...", total_grains, workers)
         LOG.info(
-            "[carve] Each worker will load HDF5 file once and reuse it for all assigned grains"
+            "[carve] Processing %d grains with %d workers (mp_start=%s)...",
+            total_grains,
+            workers,
+            mp_start,
         )
-        if workers > 1:
+        if use_fork_preload:
             LOG.info(
-                "[carve] Note: Each worker loads a full copy of the HDF5 data. "
-                "If your HDF5 file is very large, use --workers 1 (or 2) to avoid high memory use."
+                "[carve] Fork mode: using single Frame loaded in main (no per-worker HDF5 reload)."
+            )
+        else:
+            LOG.info(
+                "[carve] Spawn mode: each worker loads HDF5 once and reuses it for assigned grains."
+            )
+            LOG.info(
+                "[carve] Note: Each worker holds a full copy of the HDF5 data. "
+                "For very large files use --workers 1 or --mp-start fork on Linux."
             )
         sys.stdout.flush()
-        # Initialize each worker process with Frame loaded once (shared across tasks in that worker)
-        init_args = (
-            str(dream3d),
-            voxel_csv_str,
-            h5_grain_dset,
-            h5_euler_dset,
-            h5_numneighbors_dset,
-            h5_neighborlist_dset,
-            h5_dimensions_dset,
-        )
-        with mp.get_context("spawn").Pool(
-            processes=workers, initializer=_init_worker_frame, initargs=init_args
-        ) as pool:
-            # Use imap for progress tracking
-            chunks = []
-            completed = 0
-            for result in pool.imap(_carve_one, tasks):
-                completed += 1
-                grain_id = tasks[completed - 1][0]
-                percentage = int(100 * completed / total_grains)
-                LOG.info(
-                    "[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
-                    completed,
-                    total_grains,
-                    percentage,
-                    grain_id,
-                )
-                sys.stdout.flush()  # Ensure progress appears in SLURM output files in real-time
-                chunks.append(result)
-        df_all = pd.concat(chunks, ignore_index=True)
+        if use_fork_preload:
+            with ctx.Pool(processes=workers) as pool:
+                chunks = []
+                completed = 0
+                for result in pool.imap(_carve_one, tasks):
+                    completed += 1
+                    grain_id = tasks[completed - 1][0]
+                    percentage = int(100 * completed / total_grains)
+                    LOG.info(
+                        "[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
+                        completed,
+                        total_grains,
+                        percentage,
+                        grain_id,
+                    )
+                    sys.stdout.flush()
+                    chunks.append(result)
+                df_all = pd.concat(chunks, ignore_index=True)
+        else:
+            with ctx.Pool(
+                processes=workers,
+                initializer=_init_worker_frame,
+                initargs=_init_args,
+            ) as pool:
+                chunks = []
+                completed = 0
+                for result in pool.imap(_carve_one, tasks):
+                    completed += 1
+                    grain_id = tasks[completed - 1][0]
+                    percentage = int(100 * completed / total_grains)
+                    LOG.info(
+                        "[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
+                        completed,
+                        total_grains,
+                        percentage,
+                        grain_id,
+                    )
+                    sys.stdout.flush()
+                    chunks.append(result)
+                df_all = pd.concat(chunks, ignore_index=True)
 
     LOG.info("[done] merged %d grains → %d rows", len(gids), len(df_all))
     return df_all
@@ -593,6 +656,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Parallel workers for carving (default: 2)",
+    )
+    carve_group.add_argument(
+        "--mp-start",
+        type=str,
+        default="auto",
+        choices=("auto", "fork", "spawn"),
+        help="Multiprocessing start method: auto (fork on Linux, spawn elsewhere), fork (share loaded Frame, no per-worker HDF5 reload), spawn (each worker loads HDF5; default on non-Linux)",
     )
     carve_group.add_argument(
         "--seed",
@@ -765,6 +835,7 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
         h5_dimensions_dset=getattr(ns, "h5_dimensions_dset", None),
         random_orientation=getattr(ns, "random_orientation", False),
         run_dir=run_dir,
+        mp_start=getattr(ns, "mp_start", "auto"),
     )
 
     raw_points_path = run_dir / "raw_points.parquet"
