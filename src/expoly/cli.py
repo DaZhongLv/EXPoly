@@ -48,6 +48,46 @@ def get_mp_context(mp_start: str):
 # --------------------------- small helpers ---------------------------
 
 
+def _parse_lattice_constant(s: str) -> Dict[str, float]:
+    """
+    Parse lattice constant spec. Returns dict mapping lattice type -> value (Å).
+    Formats:
+      - "FCC:3.524,BCC:2.87"  -> {"FCC": 3.524, "BCC": 2.87}
+      - "3.524"               -> {"FCC": 3.524} (single value, backward compat)
+    """
+    s = s.strip()
+    if not s:
+        raise argparse.ArgumentTypeError("lattice-constant cannot be empty")
+    result: Dict[str, float] = {}
+    if ":" in s:
+        for part in s.split(","):
+            part = part.strip()
+            if ":" not in part:
+                raise argparse.ArgumentTypeError(
+                    f"Multi-phase format requires LATTICE:value (e.g. FCC:3.524,BCC:2.87), got {part!r}"
+                )
+            lat, val = part.split(":", 1)
+            lat = lat.strip().upper()
+            if not lat:
+                raise argparse.ArgumentTypeError(f"Empty lattice type in {part!r}")
+            try:
+                v = float(val.strip())
+            except ValueError:
+                raise argparse.ArgumentTypeError(f"Invalid lattice constant value {val!r}")
+            if lat in result:
+                raise argparse.ArgumentTypeError(f"Duplicate lattice type {lat}")
+            result[lat] = v
+    else:
+        try:
+            v = float(s)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"Single value must be a number (e.g. 3.524), or use LATTICE:value format (e.g. FCC:3.524,BCC:2.87)"
+            )
+        result["FCC"] = v  # backward compat: single value -> FCC
+    return result
+
+
 def _parse_range(s: str) -> Tuple[int, int]:
     """
     Parse 'a:b' (also tolerates '[a:b]', spaces, etc.) → (a, b), both int.
@@ -106,6 +146,43 @@ def _init_logging(verbose: bool) -> None:
 # --------------------------- grain selection ---------------------------
 
 
+def _validate_lattice_constants(
+    frame: Frame,
+    gids: np.ndarray,
+    lattice_constants: Dict[str, float],
+    default_lattice: str,
+) -> None:
+    """
+    Ensure lattice_constants covers all lattice types used by selected grains.
+    Raises RuntimeError with details if any lattice type is missing.
+    """
+    if not hasattr(frame, "get_lattice_for_grain"):
+        return
+    lattice_to_grains: Dict[str, List[int]] = {}
+    for gid in gids:
+        gid = int(gid)
+        lat = frame.get_lattice_for_grain(gid)
+        if lat is None:
+            lat = default_lattice
+        lattice_to_grains.setdefault(lat, []).append(gid)
+    missing = [lat for lat in lattice_to_grains if lat not in lattice_constants]
+    if missing:
+        details = []
+        for lat in missing:
+            gs = lattice_to_grains[lat]
+            sample = gs[:5]
+            sample_str = ", ".join(str(g) for g in sample)
+            if len(gs) > 5:
+                sample_str += f", ... ({len(gs)} total)"
+            details.append(f"  - {lat} (grain IDs: {sample_str})")
+        raise RuntimeError(
+            "Lattice constant not specified for phase(s) used in the selected region:\n"
+            + "\n".join(details)
+            + "\n\nPlease provide --lattice-constant with all lattice types, e.g.:\n"
+            f"  --lattice-constant {','.join(f'{lat}:<value>' for lat in sorted(set(lattice_to_grains.keys())))}"
+        )
+
+
 def _pick_grain_ids(
     f: Frame, hx: Tuple[int, int], hy: Tuple[int, int], hz: Tuple[int, int]
 ) -> np.ndarray:
@@ -136,6 +213,8 @@ def _build_frame_for_carve(
     h5_numneighbors_dset: str | None = None,
     h5_neighborlist_dset: str | None = None,
     h5_dimensions_dset: str | None = None,
+    h5_phases_dset: str | None = None,
+    h5_phase_name_dset: str | None = None,
 ) -> Frame:
     """
     Build Frame or VoxelCSVFrame based on whether voxel_csv is provided.
@@ -170,7 +249,12 @@ def _build_frame_for_carve(
     try:
         if voxel_csv is None:
             # Pure Dream3D path with customizable dataset names
-            return Frame(str(dream3d_path), mapping=mapping)
+            return Frame(
+                str(dream3d_path),
+                mapping=mapping,
+                h5_phases_dset=h5_phases_dset,
+                h5_phase_name_dset=h5_phase_name_dset,
+            )
         else:
             if not Path(voxel_csv).exists():
                 raise FileNotFoundError(
@@ -182,6 +266,8 @@ def _build_frame_for_carve(
                 voxel_csv=str(voxel_csv),
                 h5_grain_dset=mapping["GrainId"],
                 mapping=mapping,
+                h5_phases_dset=h5_phases_dset,
+                h5_phase_name_dset=h5_phase_name_dset,
             )
     except KeyError as e:
         dataset_name = str(e).strip("'\"")
@@ -225,6 +311,8 @@ def _init_worker_frame(
     h5_numneighbors_dset: str | None,
     h5_neighborlist_dset: str | None,
     h5_dimensions_dset: str | None,
+    h5_phases_dset: str | None = None,
+    h5_phase_name_dset: str | None = None,
 ) -> None:
     """
     Initialize worker process: load Frame once and cache it.
@@ -239,6 +327,8 @@ def _init_worker_frame(
         h5_numneighbors_dset,
         h5_neighborlist_dset,
         h5_dimensions_dset,
+        h5_phases_dset,
+        h5_phase_name_dset,
     )
     # Only reload if arguments changed (shouldn't happen, but safety check)
     if _worker_frame_args != args_key:
@@ -250,6 +340,8 @@ def _init_worker_frame(
             h5_numneighbors_dset=h5_numneighbors_dset,
             h5_neighborlist_dset=h5_neighborlist_dset,
             h5_dimensions_dset=h5_dimensions_dset,
+            h5_phases_dset=h5_phases_dset,
+            h5_phase_name_dset=h5_phase_name_dset,
         )
         _worker_frame_args = args_key
 
@@ -279,6 +371,9 @@ def _carve_one(args) -> pd.DataFrame:
         h5_neighborlist_dset,
         h5_dimensions_dset,
         grain_euler_override,
+        h5_phases_dset,
+        h5_phase_name_dset,
+        effective_ratio,
     ) = args
 
     # Use cached Frame (loaded once per worker via initializer)
@@ -292,12 +387,21 @@ def _carve_one(args) -> pd.DataFrame:
             h5_numneighbors_dset=h5_numneighbors_dset,
             h5_neighborlist_dset=h5_neighborlist_dset,
             h5_dimensions_dset=h5_dimensions_dset,
+            h5_phases_dset=h5_phases_dset,
+            h5_phase_name_dset=h5_phase_name_dset,
         )
     frame = _worker_frame_cache
 
+    # Per-grain lattice from phase (Phases/PhaseName) if available; else use global --lattice
+    lattice_use = frame.get_lattice_for_grain(grain_id) if hasattr(frame, "get_lattice_for_grain") else None
+    lattice_use = lattice_use or lattice
+
+    # Per-phase ratio for unified physical scale (effective_ratio from min lattice constant)
+    ratio_use = float(effective_ratio.get(lattice_use, ratio)) if effective_ratio else float(ratio)
+
     ccfg = CarveConfig(
-        lattice=lattice,
-        ratio=float(ratio),
+        lattice=lattice_use,
+        ratio=ratio_use,
         unit_extend_ratio=int(unit_extend_ratio),
         rng_seed=None if seed is None else int(seed),
     )
@@ -307,9 +411,10 @@ def _carve_one(args) -> pd.DataFrame:
     else:
         df = process(grain_id, frame, ccfg, grain_euler_override=grain_euler_override)
 
-    # Required column order: X,Y,Z,HX,HY,HZ,margin-ID,grain-ID
+    # Required columns; add lattice for multi-phase polish
     cols = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
     df = df[cols].copy()
+    df["lattice"] = lattice_use
     return df
 
 
@@ -330,6 +435,9 @@ def _carve_all(
     h5_numneighbors_dset: str | None = None,
     h5_neighborlist_dset: str | None = None,
     h5_dimensions_dset: str | None = None,
+    h5_phases_dset: str | None = None,
+    h5_phase_name_dset: str | None = None,
+    lattice_constants: Dict[str, float] | None = None,
     random_orientation: bool = False,
     run_dir: Path | None = None,
     mp_start: str = "auto",
@@ -345,6 +453,8 @@ def _carve_all(
         h5_numneighbors_dset=h5_numneighbors_dset,
         h5_neighborlist_dset=h5_neighborlist_dset,
         h5_dimensions_dset=h5_dimensions_dset,
+        h5_phases_dset=h5_phases_dset,
+        h5_phase_name_dset=h5_phase_name_dset,
     )
     ctx, use_fork_preload = get_mp_context(mp_start)
     if use_fork_preload:
@@ -358,6 +468,8 @@ def _carve_all(
         h5_numneighbors_dset,
         h5_neighborlist_dset,
         h5_dimensions_dset,
+        h5_phases_dset,
+        h5_phase_name_dset,
     )
     global _worker_frame_cache, _worker_frame_args
     _worker_frame_cache = frame
@@ -366,6 +478,23 @@ def _carve_all(
     gids = _pick_grain_ids(frame, hx, hy, hz)
     total_grains = len(gids)
     LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", total_grains, hx, hy, hz)
+
+    if lattice_constants:
+        _validate_lattice_constants(frame, gids, lattice_constants, lattice)
+
+    # Per-phase effective ratio: use min lattice constant as reference so all phases
+    # have the same physical extent per voxel (unified grain length scale)
+    effective_ratio: Dict[str, float] = {}
+    if lattice_constants and len(lattice_constants) > 0:
+        ref_lat = min(lattice_constants.values())
+        effective_ratio = {
+            lat: lat_val * (ratio / ref_lat) for lat, lat_val in lattice_constants.items()
+        }
+        LOG.info(
+            "[multi-phase] ref_lat=%.4f (min), effective_ratio=%s",
+            ref_lat,
+            effective_ratio,
+        )
 
     # Build grain→Euler override map for random-orientation mode (shuffle only among grains in H range)
     grain_euler_override: Dict[int, np.ndarray] | None = None
@@ -455,6 +584,9 @@ def _carve_all(
             h5_neighborlist_dset,
             h5_dimensions_dset,
             grain_euler_override,
+            h5_phases_dset,
+            h5_phase_name_dset,
+            effective_ratio,
         )
         for g in gids
     ]
@@ -600,6 +732,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Name of DIMENSIONS dataset in HDF5 (default: DIMENSIONS)",
     )
+    input_group.add_argument(
+        "--h5-phases-dset",
+        type=str,
+        default=None,
+        help="Name of Phases dataset in HDF5 for multi-phase (default: Phases). "
+        "If absent, phase-based lattice is disabled.",
+    )
+    input_group.add_argument(
+        "--h5-phase-name-dset",
+        type=str,
+        default=None,
+        help="Name of PhaseName dataset in HDF5 for multi-phase (default: PhaseName). "
+        "If absent, phase-based lattice is disabled.",
+    )
 
     # Region selection group
     region_group = r.add_argument_group("Region Selection")
@@ -638,9 +784,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     carve_group.add_argument(
         "--lattice-constant",
-        type=float,
+        type=_parse_lattice_constant,
         required=True,
-        help="Physical lattice constant in Å (e.g., 3.524 for Ni)",
+        help="Physical lattice constant(s) in Å. Single phase: 3.524. Multi-phase: FCC:3.524,BCC:2.87",
     )
     carve_group.add_argument(
         "--extend", action="store_true", help="Use extended-neighborhood pipeline for carving"
@@ -792,6 +938,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Name of DIMENSIONS dataset (default: DIMENSIONS)",
     )
     d.add_argument(
+        "--h5-phases-dset",
+        type=str,
+        default=None,
+        help="Name of Phases dataset for multi-phase (default: Phases)",
+    )
+    d.add_argument(
+        "--h5-phase-name-dset",
+        type=str,
+        default=None,
+        help="Name of PhaseName dataset for multi-phase (default: PhaseName)",
+    )
+    d.add_argument(
         "--hx", type=_parse_range, default=None, help="HX range to validate (optional, e.g. 0:50)"
     )
     d.add_argument(
@@ -815,6 +973,13 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
         run_dir = _mk_run_dir(ns.outdir)
     (hx0, hx1), (hy0, hy1), (hz0, hz1) = ns.hx, ns.hy, ns.hz
 
+    # Normalize lattice_constant: CLI gives dict; pipeline API may give float
+    lc_raw = ns.lattice_constant
+    if isinstance(lc_raw, (int, float)):
+        lattice_constants = {"FCC": float(lc_raw)}
+    else:
+        lattice_constants = lc_raw
+
     # 1) carve (extendable)
     df_all = _carve_all(
         dream3d=ns.dream3d,
@@ -833,6 +998,9 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
         h5_numneighbors_dset=getattr(ns, "h5_numneighbors_dset", None),
         h5_neighborlist_dset=getattr(ns, "h5_neighborlist_dset", None),
         h5_dimensions_dset=getattr(ns, "h5_dimensions_dset", None),
+        h5_phases_dset=getattr(ns, "h5_phases_dset", None),
+        h5_phase_name_dset=getattr(ns, "h5_phase_name_dset", None),
+        lattice_constants=lattice_constants,
         random_orientation=getattr(ns, "random_orientation", False),
         run_dir=run_dir,
         mp_start=getattr(ns, "mp_start", "auto"),
@@ -843,17 +1011,34 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
     LOG.info("[done] raw points → %s (rows=%d)", raw_points_path, len(df_all))
 
     # 2) polish (OVITO required)
-    #    scan_ratio = lattice_constant / cube_ratio; here cube_ratio is --ratio
-    scan_ratio = float(ns.lattice_constant) / float(ns.ratio)
-    LOG.info(
-        "[polish] lattice_constant=%.6g, cube_ratio=%.6g → scan_ratio=%.6g",
-        ns.lattice_constant,
-        ns.ratio,
-        scan_ratio,
-    )
+    #    With effective_ratio (multi-phase): unified scan_ratio = ref_lat/ratio for all phases
+    #    Single-phase: scan_ratio = lattice_constant / ratio
+    lc = lattice_constants
+    ratio = float(ns.ratio)
+    if len(lc) == 1:
+        (_, val), = lc.items()
+        scan_ratio = val / ratio
+        lattice_scan_ratios = None
+        LOG.info(
+            "[polish] lattice_constant=%.6g, cube_ratio=%.6g → scan_ratio=%.6g",
+            val,
+            ratio,
+            scan_ratio,
+        )
+    else:
+        ref_lat = min(lc.values())
+        scan_ratio = ref_lat / ratio
+        lattice_scan_ratios = None
+        LOG.info(
+            "[polish] multi-phase (unified physical scale): ref_lat=%.6g, cube_ratio=%.6g → scan_ratio=%.6g",
+            ref_lat,
+            ratio,
+            scan_ratio,
+        )
 
     pcfg = PolishConfig(
         scan_ratio=scan_ratio,
+        lattice_scan_ratios=lattice_scan_ratios,
         cube_ratio=float(ns.ratio),
         hx_range=(hx0, hx1),
         hy_range=(hy0, hy1),
@@ -941,8 +1126,15 @@ def doctor_command(ns: argparse.Namespace) -> int:
     }
 
     # Build mapping with custom dataset names or defaults
+    h5_phases_dset = getattr(ns, "h5_phases_dset", None)
+    h5_phase_name_dset = getattr(ns, "h5_phase_name_dset", None)
     try:
-        frame = Frame(str(dream3d_path), mapping=mapping)
+        frame = Frame(
+            str(dream3d_path),
+            mapping=mapping,
+            h5_phases_dset=h5_phases_dset,
+            h5_phase_name_dset=h5_phase_name_dset,
+        )
         info.append("✓ Successfully loaded HDF5 file")
         info.append(
             f"  Volume dimensions: HX=[0,{frame.HX_lim}), HY=[0,{frame.HY_lim}), HZ=[0,{frame.HZ_lim})"

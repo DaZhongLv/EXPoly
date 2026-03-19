@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -42,8 +42,10 @@ class PolishConfig:
     [H_low,*] origin and multiplied by scan_ratio.
     """
 
-    scan_ratio: float = 1.0
+    scan_ratio: Optional[float] = 1.0
     cube_ratio: float = 1.5
+    # Per-lattice scan_ratio when multi-phase: {lattice_type: scan_ratio}
+    lattice_scan_ratios: Optional[Dict[str, float]] = None
 
     hx_range: Sequence[float] = (0.0, 0.0)
     hy_range: Sequence[float] = (0.0, 0.0)
@@ -86,18 +88,22 @@ def _ensure_parent(path: PathLike, overwrite: bool = True) -> Path:
 def _load_raw_points(raw_path: PathLike) -> pd.DataFrame:
     """
     Read merged carved points. Supports .parquet (preferred) or .csv (no header):
-      columns: X, Y, Z, HX, HY, HZ, margin-ID, grain-ID
+      columns: X, Y, Z, HX, HY, HZ, margin-ID, grain-ID [, lattice]
     Force numeric & drop invalid rows to avoid dtype issues.
     """
     path = Path(raw_path)
     if path.suffix.lower() == ".parquet":
         df = pd.read_parquet(path)
-        # Ensure expected column names and order
+        # Ensure expected column names; lattice is optional (for multi-phase)
         expected = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
         for c in expected:
             if c not in df.columns:
                 raise KeyError(f"Parquet missing column {c!r}; got {list(df.columns)}")
-        df = df[expected]
+        # Keep lattice if present
+        if "lattice" in df.columns:
+            df = df[expected + ["lattice"]]
+        else:
+            df = df[expected]
     else:
         df = pd.read_csv(raw_path, header=None, sep=r"\s+", low_memory=False)
         df.columns = ["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
@@ -178,10 +184,32 @@ def write_lammps_input_data(
             "write_lammps_input_data: No atoms after cropping. Check hx/hy/hz ranges."
         )
 
-    # Shift to lower bound and scale
-    cut["X"] = (cut["X"] - HX_lo) * cfg.scan_ratio
-    cut["Y"] = (cut["Y"] - HY_lo) * cfg.scan_ratio
-    cut["Z"] = (cut["Z"] - HZ_lo) * cfg.scan_ratio
+    # Shift to lower bound and scale (per-lattice when multi-phase)
+    if cfg.lattice_scan_ratios is not None:
+        if "lattice" not in cut.columns:
+            raise RuntimeError(
+                "write_lammps_input_data: lattice_scan_ratios provided but raw_points missing 'lattice' column. "
+                "Re-run carve with phase data (Phases/PhaseName in dream3d)."
+            )
+        sr = cut["lattice"].map(cfg.lattice_scan_ratios).astype(float)
+        missing = sr.isna()
+        if missing.any():
+            bad = cut.loc[missing, "lattice"].unique().tolist()
+            raise RuntimeError(
+                f"write_lammps_input_data: Lattice type(s) {bad} not in lattice_scan_ratios {list(cfg.lattice_scan_ratios.keys())}"
+            )
+        cut["X"] = (cut["X"] - HX_lo) * sr
+        cut["Y"] = (cut["Y"] - HY_lo) * sr
+        cut["Z"] = (cut["Z"] - HZ_lo) * sr
+    else:
+        sr = cfg.scan_ratio
+        if sr is None:
+            raise RuntimeError(
+                "write_lammps_input_data: scan_ratio or lattice_scan_ratios required"
+            )
+        cut["X"] = (cut["X"] - HX_lo) * sr
+        cut["Y"] = (cut["Y"] - HY_lo) * sr
+        cut["Z"] = (cut["Z"] - HZ_lo) * sr
 
     atom_num = int(cut.shape[0])
     xlo, xhi = float(cut["X"].min()), float(cut["X"].max())

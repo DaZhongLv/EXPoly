@@ -169,16 +169,22 @@ def iter_sc_box_chunks(
 ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
     """
     Yield (mins_slab, maxs_slab) for each slab along the given axis.
-    Each slab spans chunk_cells steps along that axis.
+    Boundaries are aligned to the step grid to avoid misalignment artifacts
+    at chunk boundaries (irregular lattice spacing).
     """
     lo = float(mins_c[axis])
     hi = float(maxs_c[axis])
-    n_cells = max(1, int(np.ceil((hi - lo) / step)))
-    n_chunks = max(1, (n_cells + chunk_cells - 1) // chunk_cells)
-    chunk_span = (hi - lo) / n_chunks
+    n_steps = max(1, int(np.ceil((hi - lo) / step)))
+    n_chunks = max(1, (n_steps + chunk_cells - 1) // chunk_cells)
+    steps_per_chunk = max(1, (n_steps + n_chunks - 1) // n_chunks)
+
     for i in range(n_chunks):
-        slab_lo = lo + i * chunk_span
-        slab_hi = lo + (i + 1) * chunk_span
+        k_lo = i * steps_per_chunk
+        k_hi = min((i + 1) * steps_per_chunk, n_steps)
+        slab_lo = lo + k_lo * step
+        slab_hi = lo + k_hi * step
+        if slab_hi <= slab_lo:
+            continue
         mins_slab = mins_c.copy()
         maxs_slab = maxs_c.copy()
         mins_slab[axis] = slab_lo
@@ -235,6 +241,14 @@ def carve_points_inverse_box(
             kept_chunks.append(pts_h[keep_mask])
 
     kept = np.vstack(kept_chunks) if kept_chunks else np.empty((0, 3), dtype=float)
+
+    # Deduplicate at chunk boundaries (overlap at slab_hi plane)
+    if len(kept) > 0:
+        tol = 1e-9
+        kept_rounded = np.round(kept / tol) * tol
+        _, unique_idx = np.unique(kept_rounded, axis=0, return_index=True)
+        kept = kept[unique_idx]
+
     logger.info(
         "carve_points_inverse_box: kept %d/%d in %.3fs",
         len(kept),

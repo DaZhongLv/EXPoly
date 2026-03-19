@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "expoly"
-version = "1.1.0"
+version = "1.2.0"
 description = "Voxel-to-atomistic conversion and LAMMPS pipeline tools (with legacy runners)"
 readme = "README.md"
 requires-python = ">=3.9"

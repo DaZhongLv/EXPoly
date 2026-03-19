@@ -1,4 +1,4 @@
-# EXPoly
+# EXPoly (v1.2.0)
 
 **EXPoly converts experimental microstructure voxel data (Dream3D HDF5) into MD-ready atomistic structures (LAMMPS data files).**
 
@@ -45,9 +45,9 @@ Output: `runs/expoly-<timestamp>/final.data` (ready for LAMMPS)
 ┌─────────────────┐
 │   Carve         │  For each grain:
 │   - Read HDF5   │  1. Compute average Euler angles
-│   - Select H    │  2. Build oriented lattice (FCC/BCC/DIA)
+│   - Select H    │  2. Build oriented lattice (FCC/BCC/DIA) per phase
 │   ranges        │  3. Filter by grain boundaries
-│   - Build       │
+│   - Build       │  (Multi-phase: per-grain lattice from Phases/PhaseName)
 │   lattices      │
 └────────┬────────┘
          │
@@ -129,6 +129,12 @@ This tool expects voxel-based experimental data from Dream3D. Minimum datasets:
 
 **Note**: Dataset names may vary between Dream3D files. Use the `--h5-*-dset` flags to specify custom names. For example, with An0new6.dream3d, use `--h5-neighborlist-dset NeighborList2`.
 
+**Multi-phase (FCC + BCC):** For dual-phase microstructures, Dream3D may include:
+- **Phases** (or custom name): Maps grain ID → phase ID
+- **PhaseName** (or custom name): Maps phase ID → phase name (e.g. "FCC", "BCC", "Austenite", "Ferrite")
+
+Use `--h5-phases-dset` and `--h5-phase-name-dset` if your file uses different dataset names. Phase names are mapped to lattice types (FCC/BCC/DIA) via substring matching (e.g. "Austenite" → FCC, "Ferrite" → BCC).
+
 The pipeline computes per-grain average Euler angles to orient lattices.
 
 ---
@@ -165,7 +171,7 @@ expoly run \
      - Larger ratio → smaller grain size in atomistic representation
 
 4. **Polish & assemble**:
-   - Computes `scan_ratio = lattice_constant / ratio`
+   - Computes `scan_ratio = lattice_constant / ratio` (single phase) or unified `scan_ratio = ref_lat / ratio` (multi-phase)
    - Writes `tmp_polish.in.data` (pre-OVITO LAMMPS data)
    - Runs OVITO to remove overlapping/too-close atoms at grain boundaries
    - Generates clean `final.data` (correct atom count and box)
@@ -176,9 +182,9 @@ expoly run \
 expoly run \
   --dream3d <file>              # Required: Path to Dream3D file
   --hx a:b --hy c:d --hz e:f    # Required: H-space crop ranges
-  [--lattice {FCC,BCC,DIA}]     # Default: FCC (FCC=Face-Centered cubic, BCC=Body-Centered cubic, DIA=diamond)
+  [--lattice {FCC,BCC,DIA}]     # Default: FCC (used when phase data absent)
   [--ratio <float>]             # Default: 1.5
-  [--lattice-constant <float>]  # Required: Physical lattice constant (Å)
+  [--lattice-constant <spec>]   # Required: Lattice constant(s) in Å. Single: 3.524. Multi-phase: FCC:3.524,BCC:2.87
   [--workers <int>]             # Default: 2
   [--ovito-cutoff <float>]      # Default: 1.6 (safe for Ni FCC)
   [--atom-mass <float>]         # Default: 58.6934 (Ni)
@@ -200,6 +206,8 @@ expoly run \
 - `--h5-numneighbors-dset <name>`: Custom NumNeighbors dataset name (default: NumNeighbors)
 - `--h5-neighborlist-dset <name>`: Custom NeighborList dataset name (default: NeighborList). Example: NeighborList2
 - `--h5-dimensions-dset <name>`: Custom DIMENSIONS dataset name (default: DIMENSIONS)
+- `--h5-phases-dset <name>`: Custom Phases dataset for multi-phase (default: Phases)
+- `--h5-phase-name-dset <name>`: Custom PhaseName dataset for multi-phase (default: PhaseName)
 
 ### Random orientation
 
@@ -228,6 +236,43 @@ expoly run --dream3d An0new6.dream3d --hx 100:180 --hy 100:180 --hz 10:60 \
   --h5-dimensions-dset DIMENSIONS \
   --random-orientation --seed 42
 ```
+
+### Multi-phase (FCC + BCC)
+
+EXPoly supports **dual-phase or multi-phase** microstructures where different grains have different crystal structures (e.g. FCC austenite and BCC ferrite). Each grain uses the lattice type assigned by Dream3D phase data.
+
+**Requirements:**
+- Dream3D HDF5 must contain **Phases** and **PhaseName** datasets (or custom names via `--h5-phases-dset`, `--h5-phase-name-dset`)
+- Phase names are mapped to lattice types: "FCC"/"Austenite" → FCC, "BCC"/"Ferrite" → BCC, "DIA"/"Diamond" → DIA
+- Provide lattice constants for **all** phases used in the selected region
+
+**Lattice constant format:**
+- **Single phase:** `--lattice-constant 3.524`
+- **Multi-phase:** `--lattice-constant FCC:3.524,BCC:2.87` (comma-separated `LATTICE:value` pairs)
+
+**Physical scale unification:** When multiple phases are present, EXPoly uses the **smallest** lattice constant as the reference so that FCC and BCC grains have the same physical length scale per voxel. Without this, FCC grains would appear larger and BCC smaller when sharing the same `--ratio`.
+
+**Example command (dual-phase steel):**
+```bash
+expoly run \
+  --dream3d dual_phase.dream3d \
+  --hx 0:100 --hy 0:100 --hz 0:50 \
+  --lattice FCC \
+  --ratio 1.5 \
+  --lattice-constant FCC:3.524,BCC:2.87 \
+  --workers 2 \
+  --h5-grain-dset FeatureIds \
+  --h5-euler-dset EulerAngles \
+  --h5-numneighbors-dset NumNeighbors \
+  --h5-neighborlist-dset NeighborList2 \
+  --h5-dimensions-dset DIMENSIONS \
+  --h5-phases-dset Phases \
+  --h5-phase-name-dset PhaseName
+```
+
+**Output:** `raw_points.parquet` includes a `lattice` column (FCC/BCC) for each atom. The final structure has FCC and BCC grains at a unified physical scale.
+
+**Note:** If phase data is absent or a grain has no phase mapping, `--lattice` is used as the default for that grain.
 
 ### OVITO Cutoff Guidelines
 
@@ -292,8 +337,9 @@ EXPoly creates a new run directory: `runs/expoly-<timestamp>/`
 
 ### Generated Files
 
-- **`raw_points.csv`**: All carved atoms after grain boundary filtering (before overlap removal)
-  - Columns: X, Y, Z, HX, HY, HZ, margin-ID, grain-ID
+- **`raw_points.parquet`**: All carved atoms after grain boundary filtering (before overlap removal)
+  - Columns: X, Y, Z, HX, HY, HZ, margin-ID, grain-ID [, lattice]
+  - `lattice` column present when multi-phase (FCC/BCC) is used
   - Useful for debugging and inspection
 
 - **`tmp_polish.in.data`**: Pre-OVITO LAMMPS data file
@@ -365,6 +411,7 @@ EXPoly creates a new run directory: `runs/expoly-<timestamp>/`
 
 1. **Crystal structure**: Only cubic families supported (FCC, BCC, DIA)
    - Non-cubic structures (hexagonal, tetragonal, etc.) are not supported
+   - Multi-phase (FCC + BCC) supported via Dream3D Phases/PhaseName
 
 2. **Single orientation per grain**: Each grain has uniform orientation
    - Sub-grain orientation gradients are not modeled
@@ -385,7 +432,7 @@ EXPoly creates a new run directory: `runs/expoly-<timestamp>/`
 
 ### Limitations
 
-- **Crystal structures**: Only cubic families (FCC/BCC/DIA)
+- **Crystal structures**: Only cubic families (FCC/BCC/DIA); multi-phase (FCC+BCC) supported when phase data available
 - **Orientation**: Single orientation per grain (no sub-grain variation)
 - **File size**: Large volumes may require significant RAM
 - **OVITO dependency**: Cannot run polish without OVITO
