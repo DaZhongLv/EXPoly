@@ -82,7 +82,7 @@ def _parse_lattice_constant(s: str) -> Dict[str, float]:
             v = float(s)
         except ValueError:
             raise argparse.ArgumentTypeError(
-                f"Single value must be a number (e.g. 3.524), or use LATTICE:value format (e.g. FCC:3.524,BCC:2.87)"
+                "Single value must be a number (e.g. 3.524), or use LATTICE:value format (e.g. FCC:3.524,BCC:2.87)"
             )
         result["FCC"] = v  # backward compat: single value -> FCC
     return result
@@ -247,27 +247,40 @@ def _build_frame_for_carve(
     }
 
     try:
+        import inspect
         if voxel_csv is None:
             # Pure Dream3D path with customizable dataset names
-            return Frame(
-                str(dream3d_path),
-                mapping=mapping,
-                h5_phases_dset=h5_phases_dset,
-                h5_phase_name_dset=h5_phase_name_dset,
-            )
+            # Pass phase args only if Frame supports them (backward compat)
+            sig = inspect.signature(Frame)
+            if "h5_phases_dset" in sig.parameters:
+                return Frame(
+                    str(dream3d_path),
+                    mapping=mapping,
+                    h5_phases_dset=h5_phases_dset,
+                    h5_phase_name_dset=h5_phase_name_dset,
+                )
+            return Frame(str(dream3d_path), mapping=mapping)
         else:
             if not Path(voxel_csv).exists():
                 raise FileNotFoundError(
                     f"Voxel CSV file not found: {voxel_csv}. Please check the file path."
                 )
             # Voxel-CSV + HDF5 combination
+            sig = inspect.signature(VoxelCSVFrame)
+            if "h5_phases_dset" in sig.parameters:
+                return VoxelCSVFrame(
+                    path=str(dream3d_path),
+                    voxel_csv=str(voxel_csv),
+                    h5_grain_dset=mapping["GrainId"],
+                    mapping=mapping,
+                    h5_phases_dset=h5_phases_dset,
+                    h5_phase_name_dset=h5_phase_name_dset,
+                )
             return VoxelCSVFrame(
                 path=str(dream3d_path),
                 voxel_csv=str(voxel_csv),
                 h5_grain_dset=mapping["GrainId"],
                 mapping=mapping,
-                h5_phases_dset=h5_phases_dset,
-                h5_phase_name_dset=h5_phase_name_dset,
             )
     except KeyError as e:
         dataset_name = str(e).strip("'\"")
