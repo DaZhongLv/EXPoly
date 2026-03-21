@@ -19,11 +19,16 @@ def test_parse_lattice_constant():
 
 def test_validate_lattice_constants_missing_phase(tmp_dir):
     """Test that validation raises when lattice constant is missing for a phase."""
+    import inspect
+
     import h5py
     import numpy as np
 
-    from expoly.cli import _carve_all, _validate_lattice_constants
+    from expoly.cli import _validate_lattice_constants
     from expoly.frames import Frame
+
+    if "h5_phases_dset" not in inspect.signature(Frame).parameters:
+        pytest.skip("Frame does not support phase parameters (multi-phase)")
 
     h5_path = tmp_dir / "phase_test.dream3d"
     z_size, y_size, x_size = 20, 20, 20
@@ -68,10 +73,16 @@ def test_validate_lattice_constants_missing_phase(tmp_dir):
 
 def test_carve_all_dual_phase(tmp_dir):
     """Test _carve_all with dual-phase (FCC+BCC) Dream3D data."""
+    import inspect
+
     import h5py
     import numpy as np
 
     from expoly.cli import _carve_all
+    from expoly.frames import Frame
+
+    if "h5_phases_dset" not in inspect.signature(Frame).parameters:
+        pytest.skip("Frame does not support phase parameters (multi-phase)")
 
     h5_path = tmp_dir / "dual_phase.dream3d"
     z_size, y_size, x_size = 20, 20, 20

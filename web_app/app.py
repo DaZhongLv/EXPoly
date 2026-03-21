@@ -80,6 +80,22 @@ STEP_FILES = [
     ["step5_craved_gb.parquet"],
 ]
 
+# Update pipeline (inverse-box, no ball): 5 steps
+UPDATE_STEP_LABELS = [
+    "0. Voxels in H space",
+    "1. Voxels in crystal frame",
+    "2. Oriented box (crystal frame)",
+    "3. Carved lattice (inverse-box, before M1)",
+    "4. After M1 (grain + inner margin)",
+]
+UPDATE_STEP_DESCRIPTIONS = [
+    "Same as experiment: H space voxels. Option: show or hide outer margin.",
+    "Voxels in crystal frame (grain + outer margin). Option: show green box + FCC atoms (gray).",
+    "Green box in crystal frame + voxels + gray FCC atoms (to be carved).",
+    "Carved FCC grain: default crystal frame (inversed orient). Options: carved lattice in H frame (blue), inner/outer margin mesh, highlight removed (rough → carve grain).",
+    "Keep only lattice points whose rounded H fall on margin-ID 0 or 2 (grain + inner margin).",
+]
+
 GRAPH_HEIGHT = "520px"
 # Experimental voxels: 30% smaller than previous 8 -> ~5.6, use 5
 EXPERIMENTAL_MARKER_SIZE = 5
@@ -547,8 +563,301 @@ def build_scale_figure(use_extend3: bool, cr: float) -> tuple[go.Figure, int | N
     return fig, n_atoms
 
 
+def _box_edges_trace(corners: np.ndarray, color: str = "darkgreen") -> list:
+    """Corners 8x3 in order [min,min,min], [max,min,min], [max,max,min], [min,max,min], [min,min,max], ...; return 12 edge line traces."""
+    # edges: (0,1), (1,2), (2,3), (3,0), (4,5), (5,6), (6,7), (7,4), (0,4), (1,5), (2,6), (3,7)
+    edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]
+    traces = []
+    for i, j in edges:
+        traces.append(
+            go.Scatter3d(
+                x=corners[[i, j], 0],
+                y=corners[[i, j], 1],
+                z=corners[[i, j], 2],
+                mode="lines",
+                line=dict(color=color, width=4),
+                showlegend=False,
+            )
+        )
+    return traces
+
+
+def build_update_step_figure(
+    step_index: int,
+    step0_show_outer: bool = True,
+    step1_show_box_fcc: bool = False,
+    step3_show_carved_h: bool = False,
+    step3_show_inner_margin_mesh: bool = False,
+    step3_show_outer_margin_mesh: bool = False,
+    step3_highlight_removed: bool = False,
+    step4_overlay_exp: bool = False,
+) -> go.Figure:
+    """Build 3D figure for Update pipeline (inverse-box) step."""
+    traces = []
+    xc, yc, zc = "X", "Y", "Z"
+
+    if step_index == 0:
+        # Same as experiment: H space voxels (grain + outer margin); option to hide outer margin
+        path = DATA_DIR / "experimental.parquet"
+        if not path.exists():
+            return go.Figure().add_annotation(
+                text="No data. Run: python scripts/export_update_pipeline_for_web.py --dream3d <path> --grain-id 100 --out-dir web_app/data",
+                xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=14),
+            ).update_layout(template="plotly_white", margin=dict(l=0, r=0, t=30, b=56))
+        df = pd.read_parquet(path)
+        if not step0_show_outer and "margin-ID" in df.columns:
+            df = df[df["margin-ID"].isin([0, 2])].copy()
+        hx, hy, hz = "HX", "HY", "HZ"
+        if "HX" not in df.columns:
+            hx, hy, hz = "HZ", "HY", "HX"
+        if "margin-ID" in df.columns:
+            df = df.copy()
+            df["region"] = df["margin-ID"].map(
+                {0: "grain", 1: "outer margin", 2: "grain"}
+            ).fillna("other")
+            color_map = {"grain": COLOR_GRAIN, "outer margin": COLOR_OUTER_MARGIN, "other": "gray"}
+            fig = px.scatter_3d(df, x=hx, y=hy, z=hz, color="region", opacity=0.6, color_discrete_map=color_map)
+        else:
+            fig = px.scatter_3d(df, x=hx, y=hy, z=hz, opacity=0.6)
+            fig.update_traces(marker=dict(color=COLOR_GRAIN))
+        fig.update_traces(marker=dict(size=EXPERIMENTAL_MARKER_SIZE))
+        traces = list(fig.data)
+    elif step_index == 1:
+        path = DATA_DIR / "update_step1_voxels_c.parquet"
+        if not path.exists():
+            return _empty_update_figure()
+        df = pd.read_parquet(path)
+        if "margin-ID" in df.columns:
+            df = df.copy()
+            df["region"] = df["margin-ID"].map(
+                {0: "grain", 1: "outer margin", 2: "grain"}
+            ).fillna("other")
+            color_map = {"grain": COLOR_GRAIN, "outer margin": COLOR_OUTER_MARGIN, "other": "gray"}
+            fig = px.scatter_3d(df, x=xc, y=yc, z=zc, color="region", opacity=0.6, color_discrete_map=color_map)
+        else:
+            fig = px.scatter_3d(df, x=xc, y=yc, z=zc, opacity=0.6)
+            fig.update_traces(marker=dict(size=EXPERIMENTAL_MARKER_SIZE, color=COLOR_INNER_MARGIN))
+        fig.update_traces(marker=dict(size=EXPERIMENTAL_MARKER_SIZE))
+        traces = list(fig.data)
+        if step1_show_box_fcc:
+            path_c = DATA_DIR / "update_step2_box_corners_c.parquet"
+            path_fcc = DATA_DIR / "update_step1_fcc_in_box_c.parquet"
+            if path_c.exists():
+                df_c = pd.read_parquet(path_c)
+                corners = df_c[["X", "Y", "Z"]].to_numpy()
+                if len(corners) >= 8:
+                    traces.extend(_box_edges_trace(corners[:8], color="darkgreen"))
+            if path_fcc.exists():
+                df_fcc = pd.read_parquet(path_fcc)
+                traces.append(
+                    go.Scatter3d(
+                        x=df_fcc["X"], y=df_fcc["Y"], z=df_fcc["Z"],
+                        mode="markers", name="FCC in box",
+                        marker=dict(size=STEP123_MARKER_SIZE, color=COLOR_STEP123_ATOMS, opacity=0.7),
+                    )
+                )
+    elif step_index == 2:
+        path_c = DATA_DIR / "update_step2_box_corners_c.parquet"
+        path1 = DATA_DIR / "update_step1_voxels_c.parquet"
+        path_fcc = DATA_DIR / "update_step1_fcc_in_box_c.parquet"
+        if not path_c.exists():
+            return _empty_update_figure()
+        traces = []
+        df_c = pd.read_parquet(path_c)
+        corners = df_c[["X", "Y", "Z"]].to_numpy()
+        if len(corners) >= 8:
+            traces.extend(_box_edges_trace(corners[:8], color="darkgreen"))
+        if path1.exists():
+            df1 = pd.read_parquet(path1)
+            traces.append(
+                go.Scatter3d(
+                    x=df1["X"], y=df1["Y"], z=df1["Z"],
+                    mode="markers", name="voxels (crystal)",
+                    marker=dict(size=EXPERIMENTAL_MARKER_SIZE, color=COLOR_INNER_MARGIN, opacity=0.6),
+                )
+            )
+        if path_fcc.exists():
+            df_fcc = pd.read_parquet(path_fcc)
+            traces.append(
+                go.Scatter3d(
+                    x=df_fcc["X"], y=df_fcc["Y"], z=df_fcc["Z"],
+                    mode="markers", name="FCC (to carve)",
+                    marker=dict(size=STEP123_MARKER_SIZE, color=COLOR_STEP123_ATOMS, opacity=0.7),
+                )
+            )
+    elif step_index == 3:
+        # Default when entering Step 3 (no checkbox): crystal frame, inversed orient (first image).
+        # When user checks "Carved lattice (inverse-box, before M1)": H frame, before M1 (second image), blue.
+        if step3_show_carved_h:
+            path = DATA_DIR / "update_step3_carved.parquet"
+            name, color = "carved (H, before M1)", COLOR_GRAIN  # blue
+            in_h_frame = True
+        else:
+            path = DATA_DIR / "update_step3_carved_c.parquet"
+            name, color = "carved (crystal, inversed orient)", COLOR_INNER_MARGIN
+            in_h_frame = False
+        if not path.exists():
+            return _empty_update_figure()
+        df = pd.read_parquet(path)
+        t = go.Scatter3d(
+            x=df["X"], y=df["Y"], z=df["Z"],
+            mode="markers", name=name,
+            marker=dict(size=STEP5_MARKER_SIZE, color=color, opacity=0.85),
+        )
+        traces.append(t)
+        # Inner / outer margin mesh (same frame as scatter: H frame → experimental; crystal → step1_voxels_c)
+        if step3_show_inner_margin_mesh or step3_show_outer_margin_mesh:
+            if in_h_frame:
+                path_exp = DATA_DIR / "experimental.parquet"
+                if path_exp.exists():
+                    df_m = pd.read_parquet(path_exp)
+                    xc_m, yc_m, zc_m = "HX", "HY", "HZ"
+                    if "HX" not in df_m.columns:
+                        xc_m, yc_m, zc_m = "HZ", "HY", "HX"
+                    if step3_show_inner_margin_mesh:
+                        m2 = df_m[df_m["margin-ID"] == 2]
+                        if len(m2) >= 4:
+                            mesh_inner = _voxel_mesh_trace(m2, xc_m, yc_m, zc_m, opacity=0.35, color=COLOR_INNER_MARGIN)
+                            if mesh_inner is not None:
+                                mesh_inner.name = "inner margin mesh"
+                                traces.append(mesh_inner)
+                    if step3_show_outer_margin_mesh:
+                        m1 = df_m[df_m["margin-ID"] == 1]
+                        if len(m1) >= 4:
+                            mesh_outer = _voxel_mesh_trace(m1, xc_m, yc_m, zc_m, opacity=0.3, color=COLOR_OUTER_MARGIN)
+                            if mesh_outer is not None:
+                                mesh_outer.name = "outer margin mesh"
+                                traces.append(mesh_outer)
+            else:
+                path1 = DATA_DIR / "update_step1_voxels_c.parquet"
+                if path1.exists():
+                    df_m = pd.read_parquet(path1)
+                    xc_m, yc_m, zc_m = "X", "Y", "Z"
+                    if step3_show_inner_margin_mesh and "margin-ID" in df_m.columns:
+                        m2 = df_m[df_m["margin-ID"] == 2]
+                        if len(m2) >= 4:
+                            mesh_inner = _voxel_mesh_trace(m2, xc_m, yc_m, zc_m, opacity=0.35, color=COLOR_INNER_MARGIN)
+                            if mesh_inner is not None:
+                                mesh_inner.name = "inner margin mesh"
+                                traces.append(mesh_inner)
+                    if step3_show_outer_margin_mesh and "margin-ID" in df_m.columns:
+                        m1 = df_m[df_m["margin-ID"] == 1]
+                        if len(m1) >= 4:
+                            mesh_outer = _voxel_mesh_trace(m1, xc_m, yc_m, zc_m, opacity=0.3, color=COLOR_OUTER_MARGIN)
+                            if mesh_outer is not None:
+                                mesh_outer.name = "outer margin mesh"
+                                traces.append(mesh_outer)
+        # Highlight removed atoms (rough carve → carve grain, before M1 → after M1)
+        if step3_highlight_removed:
+            path_rough = DATA_DIR / "update_step3_carved.parquet"
+            path_after = DATA_DIR / "update_step4_after_m1.parquet"
+            if path_rough.exists() and path_after.exists():
+                df_rough = pd.read_parquet(path_rough)
+                df_after = pd.read_parquet(path_after)
+                if "HX" in df_after.columns and "HY" in df_after.columns and "HZ" in df_after.columns:
+                    kept_set = set(
+                        (int(df_after["HX"].iloc[i]), int(df_after["HY"].iloc[i]), int(df_after["HZ"].iloc[i]))
+                        for i in range(len(df_after))
+                    )
+                    def key_h(r):
+                        return (int(round(r["X"])), int(round(r["Y"])), int(round(r["Z"])))
+                    removed_mask = np.array([key_h(df_rough.iloc[i]) not in kept_set for i in range(len(df_rough))])
+                    df_removed = df_rough[removed_mask]
+                    if len(df_removed) > 0:
+                        if in_h_frame:
+                            traces.append(
+                                go.Scatter3d(
+                                    x=df_removed["X"], y=df_removed["Y"], z=df_removed["Z"],
+                                    mode="markers", name="removed (rough → carve grain)",
+                                    marker=dict(size=STEP5_MARKER_SIZE, color=COLOR_REMOVED_ATOMS, opacity=0.95),
+                                )
+                            )
+                        else:
+                            path_tf = DATA_DIR / "update_transform.json"
+                            if path_tf.exists():
+                                tf = json.loads(path_tf.read_text())
+                                R = np.array(tf["R"])
+                                center = np.array(tf["center"])
+                                pts = df_removed[["X", "Y", "Z"]].to_numpy(dtype=float)
+                                pts_c = (pts - center) @ R
+                                traces.append(
+                                    go.Scatter3d(
+                                        x=pts_c[:, 0], y=pts_c[:, 1], z=pts_c[:, 2],
+                                        mode="markers", name="removed (rough → carve grain)",
+                                        marker=dict(size=STEP5_MARKER_SIZE, color=COLOR_REMOVED_ATOMS, opacity=0.95),
+                                    )
+                                )
+    elif step_index == 4:
+        path = DATA_DIR / "update_step4_after_m1.parquet"
+        if not path.exists():
+            return _empty_update_figure()
+        df = pd.read_parquet(path).copy()
+        df["region"] = df["margin-ID"].map(
+            {0: "grain", 1: "outer margin", 2: "grain"}
+        ).fillna("other")
+        color_map = {"grain": COLOR_GRAIN, "outer margin": COLOR_OUTER_MARGIN, "other": "gray"}
+        fig = px.scatter_3d(df, x=xc, y=yc, z=zc, color="region", opacity=0.8, color_discrete_map=color_map)
+        fig.update_traces(marker=dict(size=STEP5_MARKER_SIZE))
+        traces = list(fig.data)
+        if step4_overlay_exp:
+            path_exp = DATA_DIR / "experimental.parquet"
+            if path_exp.exists():
+                df_exp = pd.read_parquet(path_exp)
+                if "margin-ID" in df_exp.columns:
+                    m1 = df_exp[df_exp["margin-ID"] == 1]
+                    if len(m1) > 0:
+                        hx, hy, hz = "HX", "HY", "HZ"
+                        if "HX" not in m1.columns:
+                            hx, hy, hz = "HZ", "HY", "HX"
+                        traces.append(
+                            go.Scatter3d(
+                                x=m1[hx], y=m1[hy], z=m1[hz],
+                                mode="markers", name="exp. outer margin",
+                                marker=dict(
+                                    size=EXPERIMENTAL_MARKER_SIZE + 1,
+                                    color=COLOR_OUTER_MARGIN,
+                                    symbol="diamond-open",
+                                    line=dict(width=1, color=COLOR_OUTER_MARGIN),
+                                ),
+                                opacity=0.9,
+                            )
+                        )
+    else:
+        return _empty_update_figure()
+
+    if not traces:
+        return _empty_update_figure()
+    out = go.Figure(data=traces)
+    out.update_layout(
+        scene=_scene_layout(),
+        margin=dict(l=0, r=0, t=30, b=56),
+        template="plotly_white",
+        font=dict(size=15),
+        legend=dict(
+            font=dict(size=15),
+            orientation="h",
+            yanchor="top",
+            y=-0.08,
+            xanchor="center",
+            x=0.5,
+        ),
+    )
+    return out
+
+
+def _empty_update_figure():
+    return go.Figure().add_annotation(
+        text="No data. Run: python scripts/export_update_pipeline_for_web.py ...",
+        xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=14),
+    ).update_layout(template="plotly_white", margin=dict(l=0, r=0, t=30, b=56))
+
+
 def _is_pipeline_path(pathname):
     return pathname in (None, "", "/", "/pipeline")
+
+
+def _is_update_path(pathname):
+    return pathname == "/update-pipeline"
 
 
 app = dash.Dash(__name__, title="EXPoly pipeline visualization")
@@ -590,7 +899,8 @@ app.layout = html.Div(
                         html.Div(
                             [
                                 dcc.Link("Pipeline (6 steps)", href="/pipeline", style={"marginRight": "16px", "fontSize": "16px"}),
-                                dcc.Link("Scale (CR)", href="/scale", style={"fontSize": "16px"}),
+                                dcc.Link("Scale (CR)", href="/scale", style={"marginRight": "16px", "fontSize": "16px"}),
+                                dcc.Link("Update pipeline (inverse box)", href="/update-pipeline", style={"fontSize": "16px"}),
                             ],
                             style={"marginBottom": "8px"},
                         ),
@@ -676,6 +986,30 @@ app.layout = html.Div(
                             id="scale-controls-container",
                             style={"display": "none"},
                         ),
+                        html.Div(
+                            [
+                                html.Div("Steps:", style={"fontWeight": "bold", "marginTop": "12px", "fontSize": "16px"}),
+                                dcc.RadioItems(
+                                    id="update-step-radio",
+                                    options=[{"label": lab, "value": i} for i, lab in enumerate(UPDATE_STEP_LABELS)],
+                                    value=0,
+                                    style={"marginTop": "4px", "fontSize": "15px"},
+                                ),
+                                html.Div(
+                                    dcc.Checklist(
+                                        id="update-step-options",
+                                        options=[],
+                                        value=[],
+                                        style={"marginTop": "8px", "fontSize": "15px"},
+                                    ),
+                                    id="update-step-options-container",
+                                    style={"marginTop": "8px", "display": "none"},
+                                ),
+                                html.Div(id="update-step-description", style={"marginTop": "8px", "fontSize": "15px"}),
+                            ],
+                            id="update-controls-container",
+                            style={"display": "none"},
+                        ),
                     ],
                     style={
                         "width": "48%",
@@ -703,6 +1037,7 @@ for rule in app.server.url_map.iter_rules():
 if _index_view is not None:
     app.server.add_url_rule("/pipeline", "serve_pipeline", _index_view)
     app.server.add_url_rule("/scale", "serve_scale", _index_view)
+    app.server.add_url_rule("/update-pipeline", "serve_update_pipeline", _index_view)
 
 
 @app.callback(
@@ -712,6 +1047,8 @@ if _index_view is not None:
 def update_main_title(pathname):
     if pathname == "/scale":
         return "EXPoly scale (CR) visualization"
+    if pathname == "/update-pipeline":
+        return "EXPoly update pipeline (inverse box)"
     return "EXPoly pipeline visualization"
 
 
@@ -731,13 +1068,19 @@ def update_left_figure(_, __, show_outer_values, stored_camera):
 
 
 @app.callback(
-    [Output("pipeline-controls-container", "style"), Output("scale-controls-container", "style")],
+    [
+        Output("pipeline-controls-container", "style"),
+        Output("scale-controls-container", "style"),
+        Output("update-controls-container", "style"),
+    ],
     Input("url", "pathname"),
 )
-def show_pipeline_or_scale_controls(pathname):
+def show_pipeline_or_scale_or_update_controls(pathname):
     if pathname == "/scale":
-        return {"display": "none"}, {"marginTop": "8px", "fontSize": "15px"}
-    return {"marginTop": "8px", "fontSize": "15px"}, {"display": "none"}
+        return {"display": "none"}, {"marginTop": "8px", "fontSize": "15px"}, {"display": "none"}
+    if pathname == "/update-pipeline":
+        return {"display": "none"}, {"display": "none"}, {"marginTop": "8px", "fontSize": "15px"}
+    return {"marginTop": "8px", "fontSize": "15px"}, {"display": "none"}, {"display": "none"}
 
 
 @app.callback(
@@ -770,8 +1113,46 @@ def show_step6_overlay_only_on_step6(step_index, pathname):
     return {"marginTop": "8px", "fontSize": "15px"}
 
 
+# Update pipeline: show step-specific options only under the active step
+_UPDATE_STEP_OPTIONS = {
+    0: [{"label": " Show outer margin", "value": "step0_outer"}],
+    1: [{"label": " Show green box + FCC atoms", "value": "step1_box_fcc"}],
+    3: [
+        {"label": " Carved lattice (inverse-box, before M1)", "value": "step3_carved_h"},
+        {"label": " Inner margin mesh", "value": "step3_inner_mesh"},
+        {"label": " Outer margin mesh", "value": "step3_outer_mesh"},
+        {"label": " Highlight removed atoms (rough carve → carve grain)", "value": "step3_removed"},
+    ],
+    4: [{"label": " Overlay experimental outer margin", "value": "step4_overlay"}],
+}
+
+
 @app.callback(
-    [Output("right-graph", "figure"), Output("step-description", "children"), Output("scale-description", "children")],
+    [
+        Output("update-step-options", "options"),
+        Output("update-step-options-container", "style"),
+        Output("update-step-options", "value"),
+    ],
+    [Input("update-step-radio", "value"), Input("url", "pathname")],
+)
+def update_step_options_for_step(update_step_index, pathname):
+    if pathname != "/update-pipeline":
+        return [], {"display": "none"}, []
+    idx = update_step_index if update_step_index is not None else 0
+    options = _UPDATE_STEP_OPTIONS.get(idx, [])
+    if not options:
+        return [], {"display": "none"}, []
+    # Reset checklist value when step changes so options take effect (e.g. step 1 box+FCC)
+    return options, {"marginTop": "8px"}, []
+
+
+@app.callback(
+    [
+        Output("right-graph", "figure"),
+        Output("step-description", "children"),
+        Output("scale-description", "children"),
+        Output("update-step-description", "children"),
+    ],
     [
         Input("url", "pathname"),
         Input("step-radio", "value"),
@@ -781,10 +1162,39 @@ def show_step6_overlay_only_on_step6(step_index, pathname):
         Input("step6-options", "value"),
         Input("scale-extend", "value"),
         Input("scale-cr", "value"),
+        Input("update-step-radio", "value"),
+        Input("update-step-options", "value"),
     ],
     State("camera-store", "data"),
 )
-def update_right_figure(pathname, step_index, _, step4_values, step5_values, step6_values, scale_extend, scale_cr, stored_camera):
+def update_right_figure(
+    pathname, step_index, _, step4_values, step5_values, step6_values,
+    scale_extend, scale_cr, update_step_index, update_options, stored_camera,
+):
+    if pathname == "/update-pipeline":
+        idx = update_step_index if update_step_index is not None else 0
+        opts = update_options or []
+        step0_show_outer = (idx == 0) and ("step0_outer" in opts)
+        step1_show_box_fcc = (idx == 1) and ("step1_box_fcc" in opts)
+        # Step 3: default = crystal frame (inversed orient). Only when "Carved lattice..." is checked → H frame (before M1).
+        step3_show_carved_h = (idx == 3) and ("step3_carved_h" in opts)
+        step3_show_inner_mesh = (idx == 3) and ("step3_inner_mesh" in opts)
+        step3_show_outer_mesh = (idx == 3) and ("step3_outer_mesh" in opts)
+        step3_highlight_removed = (idx == 3) and ("step3_removed" in opts)
+        step4_overlay_exp = (idx == 4) and ("step4_overlay" in opts)
+        fig = build_update_step_figure(
+            idx,
+            step0_show_outer=step0_show_outer,
+            step1_show_box_fcc=step1_show_box_fcc,
+            step3_show_carved_h=step3_show_carved_h,
+            step3_show_inner_margin_mesh=step3_show_inner_mesh,
+            step3_show_outer_margin_mesh=step3_show_outer_mesh,
+            step3_highlight_removed=step3_highlight_removed,
+            step4_overlay_exp=step4_overlay_exp,
+        )
+        fig = _apply_camera(fig, stored_camera)
+        update_desc = UPDATE_STEP_DESCRIPTIONS[idx] if 0 <= idx < len(UPDATE_STEP_DESCRIPTIONS) else ""
+        return fig, "", "", update_desc
     if pathname == "/scale":
         use_extend3 = scale_extend == "extend3"
         cr = float(scale_cr) if scale_cr is not None else 1.5
@@ -795,7 +1205,7 @@ def update_right_figure(pathname, step_index, _, step4_values, step5_values, ste
             scale_desc = f"Fine-carved grain, CR = {cr}, {ext_label}. {n_atoms} atoms."
         else:
             scale_desc = f"Fine-carved grain, CR = {cr}, {ext_label}."
-        return fig, "", scale_desc
+        return fig, "", scale_desc, ""
     if step_index is None:
         step_index = 0
     step4_opts = step4_values or []
@@ -818,7 +1228,7 @@ def update_right_figure(pathname, step_index, _, step4_values, step5_values, ste
     )
     fig = _apply_camera(fig, stored_camera)
     desc = STEP_DESCRIPTIONS[step_index] if step_index is not None else ""
-    return fig, desc, ""
+    return fig, desc, "", ""
 
 
 def _apply_camera(fig: go.Figure, camera: dict) -> go.Figure:

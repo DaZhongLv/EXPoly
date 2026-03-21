@@ -76,3 +76,93 @@ def test_frame_grain_size(frame_instance: Frame):
     size = frame_instance.get_grain_size(1)
     assert size > 0
     assert isinstance(size, int)
+
+
+def test_frame_phase_multi_phase(tmp_dir):
+    """Test Frame with Phases and PhaseName (multi-phase support)."""
+    import h5py
+
+    h5_path = tmp_dir / "phase_test.dream3d"
+    z_size, y_size, x_size = 20, 20, 20
+
+    feature_ids = np.zeros((z_size, y_size, x_size, 1), dtype=np.int32)
+    feature_ids[0:10, 0:10, 0:10, 0] = 1
+    feature_ids[10:20, 10:20, 10:20, 0] = 2
+
+    euler_angles = np.zeros((z_size, y_size, x_size, 3), dtype=np.float32)
+    euler_angles[0:10, 0:10, 0:10, :] = [0.0, 0.0, 0.0]
+    euler_angles[10:20, 10:20, 10:20, :] = [np.pi / 4, np.pi / 6, np.pi / 3]
+
+    num_neighbors = np.array([1, 1], dtype=np.int32)
+    neighbor_list = np.array([2, 1], dtype=np.int32)
+    dimensions = np.array([x_size, y_size, z_size], dtype=np.int32)
+    # Phases: index 0=background, 1=fcc (grain 1), 2=bcc (grain 2)
+    phases = np.array([0, 1, 2], dtype=np.int32)
+    phase_names = np.array(["Unknown", "fcc", "bcc"], dtype="S32")
+
+    with h5py.File(h5_path, "w") as f:
+        container = f.create_group("DataContainers")
+        volume = container.create_group("SyntheticVolumeDataContainer")
+        cell_data = volume.create_group("CellData")
+        cell_data.create_dataset("FeatureIds", data=feature_ids)
+        cell_data.create_dataset("EulerAngles", data=euler_angles)
+        feature_data = volume.create_group("CellFeatureData")
+        feature_data.create_dataset("NumNeighbors", data=num_neighbors)
+        feature_data.create_dataset("NeighborList", data=neighbor_list)
+        feature_data.create_dataset("Phases", data=phases)
+        stats = container.create_group("StatsGeneratorDataContainer")
+        ensemble = stats.create_group("CellEnsembleData")
+        ensemble.create_dataset("PhaseName", data=phase_names)
+        geometry = volume.create_group("_SIMPL_GEOMETRY")
+        geometry.create_dataset("DIMENSIONS", data=dimensions)
+
+    frame = Frame(str(h5_path))
+    assert frame.Phases is not None
+    assert frame.PhaseName is not None
+    assert frame.search_phase(1) == 1
+    assert frame.search_phase(2) == 2
+    assert frame.get_lattice_for_grain(1) == "FCC"
+    assert frame.get_lattice_for_grain(2) == "BCC"
+
+
+def test_frame_phase_custom_dset_names(tmp_dir):
+    """Test Frame with custom Phases/PhaseName dataset names."""
+    import h5py
+
+    h5_path = tmp_dir / "phase_custom.dream3d"
+    z_size, y_size, x_size = 10, 10, 10
+
+    feature_ids = np.zeros((z_size, y_size, x_size, 1), dtype=np.int32)
+    feature_ids[0:5, 0:5, 0:5, 0] = 1
+
+    euler_angles = np.zeros((z_size, y_size, x_size, 3), dtype=np.float32)
+    num_neighbors = np.array([1], dtype=np.int32)
+    neighbor_list = np.array([0], dtype=np.int32)
+    dimensions = np.array([x_size, y_size, z_size], dtype=np.int32)
+    my_phases = np.array([0, 1], dtype=np.int32)
+    my_phase_names = np.array(["Unknown", "fcc"], dtype="S32")
+
+    with h5py.File(h5_path, "w") as f:
+        c = f.create_group("DataContainers")
+        v = c.create_group("SyntheticVolumeDataContainer")
+        cd = v.create_group("CellData")
+        cd.create_dataset("FeatureIds", data=feature_ids)
+        cd.create_dataset("EulerAngles", data=euler_angles)
+        fd = v.create_group("CellFeatureData")
+        fd.create_dataset("NumNeighbors", data=num_neighbors)
+        fd.create_dataset("NeighborList", data=neighbor_list)
+        fd.create_dataset("MyPhases", data=my_phases)
+        s = c.create_group("StatsGeneratorDataContainer")
+        e = s.create_group("CellEnsembleData")
+        e.create_dataset("MyPhaseName", data=my_phase_names)
+        g = v.create_group("_SIMPL_GEOMETRY")
+        g.create_dataset("DIMENSIONS", data=dimensions)
+
+    frame = Frame(
+        str(h5_path),
+        h5_phases_dset="MyPhases",
+        h5_phase_name_dset="MyPhaseName",
+    )
+    assert frame.Phases is not None
+    assert frame.PhaseName is not None
+    assert frame.get_lattice_for_grain(1) == "FCC"

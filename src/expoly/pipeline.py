@@ -30,6 +30,8 @@ def run(
     h5_numneighbors_dset: Optional[str] = None,
     h5_neighborlist_dset: Optional[str] = None,
     h5_dimensions_dset: Optional[str] = None,
+    h5_phases_dset: Optional[str] = None,
+    h5_phase_name_dset: Optional[str] = None,
     random_orientation: bool = False,
     verbose: bool = False,
 ) -> Path:
@@ -81,6 +83,10 @@ def run(
         Custom NeighborList dataset name (default: NeighborList)
     h5_dimensions_dset : str, optional
         Custom DIMENSIONS dataset name (default: DIMENSIONS)
+    h5_phases_dset : str, optional
+        Custom Phases dataset name for multi-phase (default: Phases)
+    h5_phase_name_dset : str, optional
+        Custom PhaseName dataset name for multi-phase (default: PhaseName)
     random_orientation : bool, default=False
         If True, shuffle grain IDs and reassign orientations randomly.
         Each grain ID gets a random orientation from the shuffled list.
@@ -119,6 +125,8 @@ def run(
         h5_numneighbors_dset=h5_numneighbors_dset,
         h5_neighborlist_dset=h5_neighborlist_dset,
         h5_dimensions_dset=h5_dimensions_dset,
+        h5_phases_dset=h5_phases_dset,
+        h5_phase_name_dset=h5_phase_name_dset,
         hx=hx,
         hy=hy,
         hz=hz,
