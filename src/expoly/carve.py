@@ -194,10 +194,7 @@ def iter_sc_box_chunks(
 
 def _sc_grid_in_box(mins: np.ndarray, maxs: np.ndarray, step: float) -> np.ndarray:
     """Simple-cubic grid points inside box [mins, maxs] with spacing step. Returns Nx3."""
-    axes = [
-        np.arange(mins[i], maxs[i] + 1e-9, step, dtype=float)
-        for i in range(3)
-    ]
+    axes = [np.arange(mins[i], maxs[i] + 1e-9, step, dtype=float) for i in range(3)]
     if any(len(ax) == 0 for ax in axes):
         return np.empty((0, 3), dtype=float)
     grid = np.stack(np.meshgrid(axes[0], axes[1], axes[2], indexing="ij"), axis=-1)
@@ -226,9 +223,7 @@ def carve_points_inverse_box(
     t0 = time.process_time()
     total_candidates = 0
 
-    for mins_slab, maxs_slab in iter_sc_box_chunks(
-        mins_c, maxs_c, step, chunk_cells, axis
-    ):
+    for mins_slab, maxs_slab in iter_sc_box_chunks(mins_c, maxs_c, step, chunk_cells, axis):
         sc_c = _sc_grid_in_box(mins_slab, maxs_slab, step)
         if len(sc_c) == 0:
             continue
@@ -355,9 +350,7 @@ def carve_points(
     Uses inverse-rotate + oriented box + chunked generation; KDTree filter via k=1 + distance_upper_bound.
     If euler_override is provided (Bunge Euler (3,)), it is used for rotation instead of frame.
     """
-    return carve_points_inverse_box(
-        out_df, frame, cfg, euler_override=euler_override
-    )
+    return carve_points_inverse_box(out_df, frame, cfg, euler_override=euler_override)
 
 
 def maybe_make_frame_readonly(frame: Frame) -> None:
@@ -384,9 +377,7 @@ def carve_gb_keep_m1(margin_df: pd.DataFrame, lattice_points: np.ndarray) -> pd.
     Returns DataFrame with columns ['X','Y','Z','HX','HY','HZ','margin-ID'].
     """
     if lattice_points.size == 0:
-        return pd.DataFrame(
-            columns=["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID"]
-        )
+        return pd.DataFrame(columns=["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID"])
 
     def round_to_cell(arr):
         return np.rint(arr)

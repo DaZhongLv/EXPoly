@@ -248,6 +248,7 @@ def _build_frame_for_carve(
 
     try:
         import inspect
+
         if voxel_csv is None:
             # Pure Dream3D path with customizable dataset names
             # Pass phase args only if Frame supports them (backward compat)
@@ -406,7 +407,9 @@ def _carve_one(args) -> pd.DataFrame:
     frame = _worker_frame_cache
 
     # Per-grain lattice from phase (Phases/PhaseName) if available; else use global --lattice
-    lattice_use = frame.get_lattice_for_grain(grain_id) if hasattr(frame, "get_lattice_for_grain") else None
+    lattice_use = (
+        frame.get_lattice_for_grain(grain_id) if hasattr(frame, "get_lattice_for_grain") else None
+    )
     lattice_use = lattice_use or lattice
 
     # Per-phase ratio for unified physical scale (effective_ratio from min lattice constant)
@@ -1029,7 +1032,7 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
     lc = lattice_constants
     ratio = float(ns.ratio)
     if len(lc) == 1:
-        (_, val), = lc.items()
+        ((_, val),) = lc.items()
         scan_ratio = val / ratio
         lattice_scan_ratios = None
         LOG.info(

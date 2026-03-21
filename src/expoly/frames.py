@@ -64,6 +64,39 @@ def assign_fields(
         setattr(self_obj, attr, obj[()])
 
 
+def try_assign_optional(
+    f: hdf.File,
+    self_obj,
+    attr: str,
+    ds_basename: str,
+    prefer_groups: Optional[List[str]] = None,
+) -> bool:
+    """
+    Optionally load a dataset. If found, assign to self_obj; else set attr to None.
+    Returns True if loaded, False if not found.
+    """
+    try:
+        keys = find_dataset_keys(f, ds_basename, prefer_groups=prefer_groups)
+        obj = f
+        for k in keys:
+            obj = obj[k]
+        data = obj[()]
+        # Handle HDF5 string arrays (Dream3D StringDataArray)
+        if hasattr(obj, "asstr") and data.dtype.kind in ("S", "U", "O"):
+            try:
+                data = obj.asstr()[()]
+            except Exception:
+                data = np.array(
+                    [s.decode("utf-8") if isinstance(s, bytes) else str(s) for s in data.ravel()],
+                    dtype=object,
+                ).reshape(obj.shape if obj.shape else -1)
+        setattr(self_obj, attr, data)
+        return True
+    except KeyError:
+        setattr(self_obj, attr, None)
+        return False
+
+
 # ----------------- Small utilities: decouple from general_func -----------------
 
 
@@ -102,6 +135,8 @@ class Frame:
     path: str | Path
     prefer_groups: Optional[List[str]] = None
     mapping: Optional[Dict[str, str]] = None
+    h5_phases_dset: Optional[str] = None  # default "Phases" when loading
+    h5_phase_name_dset: Optional[str] = None  # default "PhaseName" when loading
 
     # Loaded fields
     GrainId: np.ndarray = None
@@ -133,6 +168,23 @@ class Frame:
 
         with hdf.File(p, "r") as f:
             assign_fields(f, self, mapping, prefer_groups=prefer)
+            # Optional: Phases (grain_id -> phase_id), PhaseName (phase_id -> name)
+            phases_dset = self.h5_phases_dset or "Phases"
+            phase_name_dset = self.h5_phase_name_dset or "PhaseName"
+            try_assign_optional(
+                f,
+                self,
+                "Phases",
+                phases_dset,
+                prefer_groups=["CellFeatureData", "SyntheticVolumeDataContainer"],
+            )
+            try_assign_optional(
+                f,
+                self,
+                "PhaseName",
+                phase_name_dset,
+                prefer_groups=["CellEnsembleData", "StatsGeneratorDataContainer"],
+            )
 
         # Normalize shapes and types
         self.GrainId = np.asarray(self.GrainId)
@@ -217,6 +269,49 @@ class Frame:
 
     def get_grain_size(self, Grain_ID: int) -> int:
         return int((self.fid == Grain_ID).sum())
+
+    # ---------- Phase (multi-phase support) ----------
+    def search_phase(self, grain_id: int) -> Optional[int]:
+        """
+        Return phase_id for the given grain_id, or None if phase data is not loaded.
+        Phases[grain_id] = phase_id (grain_id 1 corresponds to row 1).
+        """
+        if getattr(self, "Phases", None) is None:
+            return None
+        arr = self.Phases
+        arr = np.asarray(arr).reshape(-1)
+        if grain_id < 0 or grain_id >= len(arr):
+            return None
+        return int(arr[grain_id])
+
+    def phase_name_to_lattice(self, phase_name: str) -> str:
+        """
+        Map PhaseName string to lattice type. Returns 'FCC'|'BCC'|'DIA'.
+        Unknown/empty defaults to 'FCC'.
+        """
+        name = (phase_name or "").strip().lower()
+        if "bcc" in name:
+            return "BCC"
+        if "fcc" in name:
+            return "FCC"
+        if "dia" in name or "diamond" in name:
+            return "DIA"
+        return "FCC"  # default for Unknown Phase Type etc.
+
+    def get_lattice_for_grain(self, grain_id: int) -> Optional[str]:
+        """
+        Return lattice type for the given grain from phase data, or None if not available.
+        """
+        phase_id = self.search_phase(grain_id)
+        if phase_id is None:
+            return None
+        pnames = getattr(self, "PhaseName", None)
+        if pnames is None or phase_id < 0 or phase_id >= len(pnames):
+            return None
+        name = pnames[phase_id]
+        if isinstance(name, (bytes, np.bytes_)):
+            name = name.decode("utf-8", errors="replace")
+        return self.phase_name_to_lattice(str(name))
 
     def from_IDs_to_Ds(self, Grain_IDs: List[int]) -> pd.DataFrame:
         parts = [self.from_ID_to_D(g) for g in Grain_IDs]
@@ -584,11 +679,15 @@ class VoxelCSVFrame(Frame):
             dream_path,
             prefer_groups=prefer,
             mapping=base_mapping,
+            h5_phases_dset=getattr(self, "h5_phases_dset", None),
+            h5_phase_name_dset=getattr(self, "h5_phase_name_dset", None),
         )
         self._h5_frame = h5_frame
 
         self.Num_NN = h5_frame.Num_NN
         self.Num_list = h5_frame.Num_list
+        self.Phases = getattr(h5_frame, "Phases", None)
+        self.PhaseName = getattr(h5_frame, "PhaseName", None)
 
         grain_euler_map: Dict[int, np.ndarray] = {}
         uniq_ids = np.unique(h5_frame.fid)
