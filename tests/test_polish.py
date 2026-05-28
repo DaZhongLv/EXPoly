@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from expoly.polish import PolishConfig, _load_raw_points, write_lammps_input_data
+import numpy as np
+import pandas as pd
+
+from expoly.polish import (
+    PolishConfig,
+    _load_raw_points,
+    _surviving_ids_from_mask,
+    write_lammps_input_data,
+)
 
 
 def test_polish_config():
@@ -106,3 +114,26 @@ def test_lammps_file_structure(tmp_dir: Path):
     assert "xlo xhi" in all_text or "xlo" in all_text
     assert any("Masses" in line for line in lines)
     assert any("Atoms" in line for line in lines)
+
+
+def test_surviving_ids_from_mask_preserves_gaps(tmp_dir: Path):
+    """OVITO keep mask should propagate original atom ids (not 1..N)."""
+    id_map = tmp_dir / "ids.txt"
+    pd.DataFrame(
+        {
+            "id": [10, 20, 30, 40],
+            "X": [0.0, 1.0, 2.0, 3.0],
+            "Y": [0.0, 0.0, 0.0, 0.0],
+            "Z": [0.0, 0.0, 0.0, 0.0],
+            "margin-ID": [0, 0, 0, 0],
+            "grain-ID": [100, 100, 200, 200],
+        }
+    ).to_csv(id_map, sep=" ", index=False, header=False)
+    mask_path = tmp_dir / "mask.npy"
+    np.save(mask_path, np.array([0, 1, 0, 1], dtype=int))
+
+    atom_ids, grain_ids = _surviving_ids_from_mask(id_map, mask_path)
+    assert atom_ids is not None
+    assert grain_ids is not None
+    np.testing.assert_array_equal(atom_ids, [10, 30])
+    np.testing.assert_array_equal(grain_ids, [100, 200])
