@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from expoly.frames import Frame, find_dataset_keys
+from expoly.frames import Frame, find_dataset_keys, voxel_csv_h_index_ranges
 
 
 def test_find_dataset_keys(toy_dream3d_file, tmp_dir):
@@ -166,3 +166,30 @@ def test_frame_phase_custom_dset_names(tmp_dir):
     assert frame.Phases is not None
     assert frame.PhaseName is not None
     assert frame.get_lattice_for_grain(1) == "FCC"
+
+
+def test_voxel_csv_h_index_ranges_absolute_coords(tmp_dir):
+    """Dream3D absolute coords in CSV map to 0-based index ranges."""
+    csv_path = tmp_dir / "crop_voxel.csv"
+    csv_path.write_text(
+        "# EXPoly HX=40:210 HY=60:200 HZ=90:700\n"
+        "voxel-Z voxel-Y voxel-X grain-ID\n"
+        "90 60 40 1\n"
+        "90 60 41 1\n"
+        "91 61 40 1\n"
+        "700 200 210 2\n"
+    )
+    assert voxel_csv_h_index_ranges(csv_path) == ((0, 170), (0, 140), (0, 610))
+
+
+def test_voxel_csv_h_index_ranges_zero_based(tmp_dir):
+    csv_path = tmp_dir / "voronoi.csv"
+    csv_path.write_text(
+        "voxel-Z voxel-Y voxel-X grain-ID\n"
+        "0 0 0 1\n"
+        "0 0 1 1\n"
+        "0 1 0 1\n"
+        "1 0 0 1\n"
+        "10 5 8 2\n"
+    )
+    assert voxel_csv_h_index_ranges(csv_path) == ((0, 8), (0, 5), (0, 10))

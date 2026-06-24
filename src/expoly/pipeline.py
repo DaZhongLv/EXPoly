@@ -8,9 +8,9 @@ from typing import Optional
 
 def run(
     dream3d: str | Path,
-    hx: tuple[int, int],
-    hy: tuple[int, int],
-    hz: tuple[int, int],
+    hx: tuple[int, int] | None,
+    hy: tuple[int, int] | None,
+    hz: tuple[int, int] | None,
     lattice_constant: float,
     *,
     lattice: str = "FCC",
@@ -44,8 +44,9 @@ def run(
     ----------
     dream3d : str | Path
         Path to Dream3D HDF5 file
-    hx, hy, hz : tuple[int, int]
-        H-space crop ranges (inclusive), e.g., (0, 50)
+    hx, hy, hz : tuple[int, int], optional
+        H-space crop ranges (inclusive), e.g., (0, 50). Omit when ``voxel_csv``
+        is provided to convert the full CSV grid.
     lattice_constant : float
         Physical lattice constant in Å (e.g., 3.524 for Ni)
     lattice : str, default="FCC"

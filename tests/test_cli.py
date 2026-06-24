@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from expoly.cli import _parse_lattice_constant, _parse_range, build_parser
+from expoly.cli import _parse_lattice_constant, _parse_range, _resolve_run_h_ranges, build_parser
 
 
 def test_parse_lattice_constant():
@@ -277,3 +277,43 @@ def test_cli_defaults(tmp_dir: Path):
     assert args.keep_tmp is False
     assert args.final_with_grain is False
     assert args.verbose is False
+
+
+def test_cli_run_voxel_csv_without_h_ranges(tmp_dir: Path):
+    """With --voxel-csv, --hx/--hy/--hz are optional."""
+    parser = build_parser()
+    dummy_file = tmp_dir / "test.dream3d"
+    dummy_file.touch()
+    voxel_csv = tmp_dir / "voxel.csv"
+    voxel_csv.write_text(
+        "voxel-Z voxel-Y voxel-X grain-ID\n"
+        "90 60 40 1\n"
+        "90 60 41 1\n"
+        "91 61 40 1\n"
+        "700 200 210 2\n"
+    )
+
+    args = parser.parse_args(
+        [
+            "run",
+            "--dream3d",
+            str(dummy_file),
+            "--voxel-csv",
+            str(voxel_csv),
+            "--lattice-constant",
+            "3.567",
+        ]
+    )
+
+    assert args.hx is None
+    assert args.hy is None
+    assert args.hz is None
+    hx, hy, hz = _resolve_run_h_ranges(args.voxel_csv, args.hx, args.hy, args.hz)
+    assert hx == (0, 170)
+    assert hy == (0, 140)
+    assert hz == (0, 610)
+
+
+def test_resolve_h_ranges_requires_h_without_voxel_csv():
+    with pytest.raises(RuntimeError, match="--voxel-csv is not provided"):
+        _resolve_run_h_ranges(None, None, None, None)

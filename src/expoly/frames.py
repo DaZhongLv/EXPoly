@@ -112,6 +112,51 @@ def _unit_vec(base_xyz: np.ndarray, offsets: np.ndarray) -> np.ndarray:
     return out + off
 
 
+def normalize_axis_to_indices(vals: np.ndarray) -> Tuple[np.ndarray, float, float]:
+    """
+    Map raw voxel coordinates to contiguous 0-based indices (step = min spacing).
+    Matches the grid built by :class:`VoxelCSVFrame`.
+    """
+    vals = vals.astype(float)
+    uniq = np.unique(vals[~np.isnan(vals)])
+    if uniq.size == 0:
+        raise ValueError("Axis has no valid values")
+    base = float(uniq.min())
+    if uniq.size == 1:
+        step = 1.0
+    else:
+        diffs = np.diff(np.sort(uniq))
+        diffs = diffs[diffs > 1e-8]
+        step = float(diffs.min()) if diffs.size > 0 else 1.0
+    idx = np.rint((vals - base) / step).astype(int)
+    return idx, base, step
+
+
+def voxel_csv_h_index_ranges(
+    csv_path: str | Path,
+    x_col: str = "voxel-X",
+    y_col: str = "voxel-Y",
+    z_col: str = "voxel-Z",
+) -> Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]:
+    """
+    Inclusive 0-based H ranges covering the full voxel CSV grid.
+
+    Use these as ``--hx/--hy/--hz`` when driving :class:`VoxelCSVFrame` (or omit
+    them on the CLI when ``--voxel-csv`` is set).
+    """
+    csv_path = Path(csv_path)
+    df = pd.read_csv(csv_path, sep=r"\s+", comment="#", engine="python")
+    for col in (x_col, y_col, z_col):
+        if col not in df.columns:
+            raise KeyError(f"Voxel CSV missing column {col!r}: {csv_path}")
+
+    def _range(col: str) -> Tuple[int, int]:
+        idx, _, _ = normalize_axis_to_indices(df[col].to_numpy())
+        return 0, int(idx.max())
+
+    return _range(x_col), _range(y_col), _range(z_col)
+
+
 def _safe_voxel_id(
     grain_id_arr: np.ndarray, z: np.ndarray, y: np.ndarray, x: np.ndarray
 ) -> np.ndarray:
@@ -163,10 +208,20 @@ class Frame:
             "Dimension": "DIMENSIONS",
             # Optional: "IPF":"IPFColor", "CI":"Confidence Index"
         }
-        mapping = self.mapping or default_mapping
+        mapping = dict(self.mapping or default_mapping)
         prefer = self.prefer_groups or ["CellData", "CellFeatureData", "_SIMPL_GEOMETRY"]
 
         with hdf.File(p, "r") as f:
+            # Meshed/GM3D files use GrainID instead of FeatureIds
+            grain_ds = mapping.get("GrainId", "FeatureIds")
+            if grain_ds in ("FeatureIds", "GrainId"):
+                for cand in ("FeatureIds", "GrainID", "GrainId"):
+                    try:
+                        find_dataset_keys(f, cand, prefer_groups=prefer)
+                        mapping["GrainId"] = cand
+                        break
+                    except KeyError:
+                        continue
             assign_fields(f, self, mapping, prefer_groups=prefer)
             # Optional: Phases (grain_id -> phase_id), PhaseName (phase_id -> name)
             phases_dset = self.h5_phases_dset or "Phases"
@@ -716,29 +771,9 @@ class VoxelCSVFrame(Frame):
 
         grain_id = df[self.grain_col].astype(int).to_numpy()
 
-        def _normalize_axis(vals: np.ndarray):
-            vals = vals.astype(float)
-            uniq = np.unique(vals)
-            uniq = uniq[~np.isnan(uniq)]
-            if uniq.size == 0:
-                raise ValueError("Axis has no valid values")
-            base = float(uniq.min())
-            if uniq.size == 1:
-                step = 1.0
-            else:
-                diffs = np.diff(np.sort(uniq))
-                diffs = diffs[diffs > 1e-8]
-                step = float(diffs.min()) if diffs.size > 0 else 1.0
-            idx = np.rint((vals - base) / step).astype(int)
-            return idx, base, step
-
-        gx_raw = df[self.x_col].to_numpy()
-        gy_raw = df[self.y_col].to_numpy()
-        gz_raw = df[self.z_col].to_numpy()
-
-        hx, x0, dx = _normalize_axis(gx_raw)
-        hy, y0, dy = _normalize_axis(gy_raw)
-        hz, z0, dz = _normalize_axis(gz_raw)
+        hx, x0, dx = normalize_axis_to_indices(df[self.x_col].to_numpy())
+        hy, y0, dy = normalize_axis_to_indices(df[self.y_col].to_numpy())
+        hz, z0, dz = normalize_axis_to_indices(df[self.z_col].to_numpy())
 
         self.H_origin = np.array([x0, y0, z0], dtype=float)
         self.H_step = np.array([dx, dy, dz], dtype=float)
