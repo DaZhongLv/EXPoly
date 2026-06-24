@@ -6,15 +6,30 @@ from pathlib import Path
 
 import pytest
 
-from expoly.cli import _parse_lattice_constant, _parse_range, _resolve_run_h_ranges, build_parser
+from expoly.cli import (
+    _parse_lattice_constant,
+    _parse_range,
+    _resolve_lattice_constants,
+    _resolve_run_h_ranges,
+    build_parser,
+)
 
 
 def test_parse_lattice_constant():
     """Test lattice constant parsing."""
-    assert _parse_lattice_constant("3.524") == {"FCC": 3.524}
+    assert _parse_lattice_constant("3.524") == {"__UNIFIED__": 3.524}
     assert _parse_lattice_constant("FCC:3.524") == {"FCC": 3.524}
     assert _parse_lattice_constant("FCC:3.524,BCC:2.87") == {"FCC": 3.524, "BCC": 2.87}
     assert _parse_lattice_constant("fcc:3.524,bcc:2.87") == {"FCC": 3.524, "BCC": 2.87}
+
+
+def test_resolve_lattice_constants_unified():
+    lc, multi = _resolve_lattice_constants({"__UNIFIED__": 3.524}, "DIA")
+    assert lc == {"DIA": 3.524}
+    assert multi is False
+
+    lc2, multi2 = _resolve_lattice_constants({"FCC": 3.524, "BCC": 2.87}, "FCC")
+    assert multi2 is True
 
 
 def test_validate_lattice_constants_missing_phase(tmp_dir):
@@ -132,6 +147,7 @@ def test_carve_all_dual_phase(tmp_dir):
         h5_grain_dset=None,
         h5_euler_dset=None,
         lattice_constants={"FCC": 3.524, "BCC": 2.87},
+        use_phase_lattice=True,
     )
 
     assert "lattice" in df.columns
@@ -217,7 +233,7 @@ def test_cli_run_minimal_args(tmp_dir: Path):
     assert args.hx == (0, 10)
     assert args.hy == (0, 10)
     assert args.hz == (0, 10)
-    assert args.lattice_constant == {"FCC": 3.524}
+    assert args.lattice_constant == {"__UNIFIED__": 3.524}
     assert args.lattice == "FCC"  # Default
     assert args.ratio == 1.5  # Default
 

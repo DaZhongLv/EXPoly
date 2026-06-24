@@ -84,8 +84,27 @@ def _parse_lattice_constant(s: str) -> Dict[str, float]:
             raise argparse.ArgumentTypeError(
                 "Single value must be a number (e.g. 3.524), or use LATTICE:value format (e.g. FCC:3.524,BCC:2.87)"
             )
-        result["FCC"] = v  # backward compat: single value -> FCC
+        # Bare number: resolved later with --lattice (one constant for the whole run).
+        result["__UNIFIED__"] = v
     return result
+
+
+def _resolve_lattice_constants(
+    lc: Dict[str, float], default_lattice: str
+) -> Tuple[Dict[str, float], bool]:
+    """
+    Return (lattice_constants, use_phase_lattice).
+
+    A single ``--lattice-constant`` applies to the entire structure via ``--lattice``.
+    Multi-type specs such as ``FCC:3.524,BCC:2.87`` enable per-grain lattice from Dream3D phases.
+    """
+    if "__UNIFIED__" in lc:
+        lat = default_lattice.strip().upper()
+        return {lat: float(lc["__UNIFIED__"])}, False
+    if len(lc) == 1:
+        lat, val = next(iter(lc.items()))
+        return {lat.upper(): float(val)}, False
+    return {k.upper(): float(v) for k, v in lc.items()}, True
 
 
 def _parse_range(s: str) -> Tuple[int, int]:
@@ -186,19 +205,12 @@ def _validate_lattice_constants(
         lattice_to_grains.setdefault(lat, []).append(gid)
     missing = [lat for lat in lattice_to_grains if lat not in lattice_constants]
     if missing:
-        details = []
-        for lat in missing:
-            gs = lattice_to_grains[lat]
-            sample = gs[:5]
-            sample_str = ", ".join(str(g) for g in sample)
-            if len(gs) > 5:
-                sample_str += f", ... ({len(gs)} total)"
-            details.append(f"  - {lat} (grain IDs: {sample_str})")
+        all_types = sorted(set(lattice_to_grains.keys()))
         raise RuntimeError(
-            "Lattice constant not specified for phase(s) used in the selected region:\n"
-            + "\n".join(details)
-            + "\n\nPlease provide --lattice-constant with all lattice types, e.g.:\n"
-            f"  --lattice-constant {','.join(f'{lat}:<value>' for lat in sorted(set(lattice_to_grains.keys())))}"
+            "Lattice constant not specified for lattice type(s): "
+            + ", ".join(missing)
+            + "\n\nProvide all types via --lattice-constant, e.g.:\n"
+            f"  --lattice-constant {','.join(f'{lat}:<value>' for lat in all_types)}"
         )
 
 
@@ -407,6 +419,7 @@ def _carve_one(args) -> pd.DataFrame:
         h5_phases_dset,
         h5_phase_name_dset,
         effective_ratio,
+        use_phase_lattice,
     ) = args
 
     # Use cached Frame (loaded once per worker via initializer)
@@ -425,11 +438,11 @@ def _carve_one(args) -> pd.DataFrame:
         )
     frame = _worker_frame_cache
 
-    # Per-grain lattice from phase (Phases/PhaseName) if available; else use global --lattice
-    lattice_use = (
-        frame.get_lattice_for_grain(grain_id) if hasattr(frame, "get_lattice_for_grain") else None
-    )
-    lattice_use = lattice_use or lattice
+    # Unified mode: one --lattice for all grains. Multi-phase mode: read from Dream3D phases.
+    if use_phase_lattice and hasattr(frame, "get_lattice_for_grain"):
+        lattice_use = frame.get_lattice_for_grain(grain_id) or lattice
+    else:
+        lattice_use = lattice
 
     # Per-phase ratio for unified physical scale (effective_ratio from min lattice constant)
     ratio_use = float(effective_ratio.get(lattice_use, ratio)) if effective_ratio else float(ratio)
@@ -473,6 +486,7 @@ def _carve_all(
     h5_phases_dset: str | None = None,
     h5_phase_name_dset: str | None = None,
     lattice_constants: Dict[str, float] | None = None,
+    use_phase_lattice: bool = False,
     random_orientation: bool = False,
     run_dir: Path | None = None,
     mp_start: str = "auto",
@@ -515,13 +529,19 @@ def _carve_all(
     total_grains = len(gids)
     LOG.info("carve: %d grains selected in H ranges HX=%s HY=%s HZ=%s", total_grains, hx, hy, hz)
 
-    if lattice_constants:
+    if use_phase_lattice and lattice_constants:
         _validate_lattice_constants(frame, gids, lattice_constants, lattice)
+    elif lattice_constants:
+        LOG.info(
+            "[carve] unified lattice: %s, lattice_constant=%.6g (Dream3D phase labels ignored)",
+            lattice,
+            next(iter(lattice_constants.values())),
+        )
 
     # Per-phase effective ratio: use min lattice constant as reference so all phases
     # have the same physical extent per voxel (unified grain length scale)
     effective_ratio: Dict[str, float] = {}
-    if lattice_constants and len(lattice_constants) > 0:
+    if use_phase_lattice and lattice_constants and len(lattice_constants) > 0:
         ref_lat = min(lattice_constants.values())
         effective_ratio = {
             lat: lat_val * (ratio / ref_lat) for lat, lat_val in lattice_constants.items()
@@ -623,6 +643,7 @@ def _carve_all(
             h5_phases_dset,
             h5_phase_name_dset,
             effective_ratio,
+            use_phase_lattice,
         )
         for g in gids
     ]
@@ -836,7 +857,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--lattice-constant",
         type=_parse_lattice_constant,
         required=True,
-        help="Physical lattice constant(s) in Å. Single phase: 3.524. Multi-phase: FCC:3.524,BCC:2.87",
+        help="Physical lattice constant in Å for the whole structure (e.g. 3.524), "
+        "or per-type multi-phase spec (e.g. FCC:3.524,BCC:2.87). "
+        "A single value uses --lattice for all grains and ignores Dream3D phase labels.",
     )
     carve_group.add_argument(
         "--extend", action="store_true", help="Use extended-neighborhood pipeline for carving"
@@ -1029,9 +1052,10 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
     # Normalize lattice_constant: CLI gives dict; pipeline API may give float
     lc_raw = ns.lattice_constant
     if isinstance(lc_raw, (int, float)):
-        lattice_constants = {"FCC": float(lc_raw)}
-    else:
-        lattice_constants = lc_raw
+        lc_raw = {"__UNIFIED__": float(lc_raw)}
+    lattice_constants, use_phase_lattice = _resolve_lattice_constants(
+        lc_raw, ns.lattice
+    )
 
     # 1) carve (extendable)
     raw_points_path = run_dir / "raw_points.parquet"
@@ -1055,6 +1079,7 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
         h5_phases_dset=getattr(ns, "h5_phases_dset", None),
         h5_phase_name_dset=getattr(ns, "h5_phase_name_dset", None),
         lattice_constants=lattice_constants,
+        use_phase_lattice=use_phase_lattice,
         random_orientation=getattr(ns, "random_orientation", False),
         run_dir=run_dir,
         mp_start=getattr(ns, "mp_start", "auto"),
