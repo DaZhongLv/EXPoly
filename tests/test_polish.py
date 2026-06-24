@@ -9,6 +9,7 @@ import pandas as pd
 
 from expoly.polish import (
     PolishConfig,
+    _format_run_provenance,
     _load_raw_points,
     _surviving_ids_from_mask,
     write_lammps_input_data,
@@ -34,6 +35,21 @@ def test_polish_config():
     assert cfg.cube_ratio == 1.5
     assert cfg.hx_range == (0, 10)
     assert cfg.ovito_cutoff == 1.6
+
+
+def test_format_run_provenance():
+    cfg = PolishConfig(
+        hx_range=(40, 210),
+        hy_range=(60, 200),
+        hz_range=(90, 400),
+        cube_ratio=1.5,
+    )
+    line = _format_run_provenance(cfg)
+    assert line.startswith("# EXPoly ")
+    assert "HX=40:210" in line
+    assert "HY=60:200" in line
+    assert "HZ=90:400" in line
+    assert "ratio=1.5" in line
 
 
 def test_load_raw_points(tmp_dir: Path):

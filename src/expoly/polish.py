@@ -85,6 +85,19 @@ def _ensure_parent(path: PathLike, overwrite: bool = True) -> Path:
     return p
 
 
+def _format_run_provenance(cfg: PolishConfig) -> str:
+    """Comment lines recording H-space crop and lattice-to-voxel ratio."""
+    hx0, hx1 = cfg.hx_range
+    hy0, hy1 = cfg.hy_range
+    hz0, hz1 = cfg.hz_range
+    return (
+        f"# EXPoly HX={int(hx0)}:{int(hx1)} "
+        f"HY={int(hy0)}:{int(hy1)} "
+        f"HZ={int(hz0)}:{int(hz1)} "
+        f"ratio={cfg.cube_ratio:g}\n"
+    )
+
+
 def _load_raw_points(raw_path: PathLike) -> pd.DataFrame:
     """
     Read merged carved points. Supports .parquet (preferred) or .csv (no header):
@@ -430,6 +443,7 @@ def build_final_data_from_ovito_atoms(
     atom_mass: float = 58.6934,
     grain_ids: Optional[Sequence[int]] = None,
     atom_ids: Optional[Sequence[int]] = None,
+    cfg: Optional[PolishConfig] = None,
 ) -> Tuple[int, Tuple[float, float, float, float, float, float]]:
     """
     Use OVITO-cleaned *data* file, re-extract the Atoms block, recompute N/box, and write a fresh, minimal LAMMPS data:
@@ -494,9 +508,11 @@ def build_final_data_from_ovito_atoms(
     ylo, yhi = float(xyz[:, 1].min()), float(xyz[:, 1].max())
     zlo, zhi = float(xyz[:, 2].min()), float(xyz[:, 2].max())
 
+    provenance = _format_run_provenance(cfg) if cfg is not None else ""
     # Header; if grain_ids is present, we keep Atoms style 'atomic' but add a comment line
     header = (
-        f"# EXPoly polished (final)\n"
+        provenance
+        + f"# EXPoly polished (final)\n"
         f"{atom_num} atoms\n"
         f"1 atom types\n\n"
         f"{xlo} {xhi} xlo xhi\n"
@@ -539,6 +555,7 @@ def build_final_dump_with_grain(
     grain_ids: Sequence[int],
     atom_ids: Sequence[int],
     timestep: int = 0,
+    cfg: Optional[PolishConfig] = None,
 ) -> Tuple[int, Tuple[float, float, float, float, float, float]]:
     """
     Write a LAMMPS dump file from OVITO-cleaned LAMMPS data (ovito_psc) and per-atom grain-ID:
@@ -600,6 +617,8 @@ def build_final_dump_with_grain(
 
     final_dump_path = _ensure_parent(final_dump_path, True)
     with open(final_dump_path, "w", encoding="utf-8") as f:
+        if cfg is not None:
+            f.write(_format_run_provenance(cfg))
         # ---- header ----
         f.write("ITEM: TIMESTEP\n")
         f.write(f"{int(timestep)}\n")
@@ -709,6 +728,7 @@ def polish_pipeline(
         atom_mass=cfg.atom_mass,
         grain_ids=grain_ids_for_data,
         atom_ids=atom_ids_final,
+        cfg=cfg,
     )
     logger.info("polish: final atoms=%d, box=%s", atom_num1, np.round(box1, 6))
 
@@ -722,6 +742,7 @@ def polish_pipeline(
                 grain_ids_final,
                 atom_ids_final,
                 timestep=cfg.current_frame,  # e.g., use current_frame as timestep
+                cfg=cfg,
             )
             logger.info(
                 "polish: also wrote dump with grain-ID → %s (atoms=%d)",
