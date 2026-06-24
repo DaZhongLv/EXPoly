@@ -18,7 +18,7 @@ from expoly.carve import (
     process,
     process_extend,
 )
-from expoly.frames import Frame, VoxelCSVFrame
+from expoly.frames import Frame, VoxelCSVFrame, voxel_csv_h_index_ranges
 from expoly.generate_voronoi import run as voronoi_run
 from expoly.polish import PolishConfig, polish_pipeline
 
@@ -111,19 +111,38 @@ def _mk_run_dir(root: Path | None = None) -> Path:
     return path
 
 
-def _voxel_csv_h_ranges(csv_path: Path) -> Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]:
+def _resolve_run_h_ranges(
+    voxel_csv: Path | None,
+    hx: Tuple[int, int] | None,
+    hy: Tuple[int, int] | None,
+    hz: Tuple[int, int] | None,
+) -> Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]:
     """
-    Read a voxel CSV (e.g. voronoi.csv) and return H ranges that cover the full grid:
-    (0, max_x), (0, max_y), (0, max_z) so that VoxelCSVFrame indexing does not go out of bounds.
+    Resolve HX/HY/HZ for ``expoly run``.
+
+    With ``--voxel-csv``, omitted ranges default to the full CSV grid (0-based indices).
+    Without ``--voxel-csv``, all three ranges are required.
     """
-    df = pd.read_csv(csv_path, sep=r"\s+", comment="#", engine="python")
-    for col in ["voxel-X", "voxel-Y", "voxel-Z"]:
-        if col not in df.columns:
-            raise KeyError(f"Voxel CSV missing column {col!r}: {csv_path}")
-    max_x = int(df["voxel-X"].max())
-    max_y = int(df["voxel-Y"].max())
-    max_z = int(df["voxel-Z"].max())
-    return (0, max_x), (0, max_y), (0, max_z)
+    if voxel_csv is not None:
+        auto = voxel_csv_h_index_ranges(voxel_csv)
+        hx_out = hx if hx is not None else auto[0]
+        hy_out = hy if hy is not None else auto[1]
+        hz_out = hz if hz is not None else auto[2]
+        if hx is None or hy is None or hz is None:
+            LOG.info(
+                "H ranges from voxel CSV %s: HX=%s HY=%s HZ=%s",
+                voxel_csv,
+                hx_out,
+                hy_out,
+                hz_out,
+            )
+        return hx_out, hy_out, hz_out
+
+    if hx is None or hy is None or hz is None:
+        raise RuntimeError(
+            "--hx, --hy, and --hz are required when --voxel-csv is not provided."
+        )
+    return hx, hy, hz
 
 
 def _init_logging(verbose: bool) -> None:
@@ -457,6 +476,7 @@ def _carve_all(
     random_orientation: bool = False,
     run_dir: Path | None = None,
     mp_start: str = "auto",
+    out_parquet: Path | None = None,
 ) -> pd.DataFrame:
     # Load Frame once in main process. Under fork (Linux/SLURM) workers inherit this
     # copy; we make arrays read-only to avoid copy-on-write duplication. Shared are
@@ -610,18 +630,36 @@ def _carve_all(
     # Process grains with progress display
     import sys
 
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    pq_writer: pq.ParquetWriter | None = None
+    stream_rows = 0
+    chunks: List[pd.DataFrame] = []
+
+    def _handle_carve_result(df: pd.DataFrame) -> None:
+        nonlocal pq_writer, stream_rows
+        if out_parquet is not None:
+            if df is None or len(df) == 0:
+                return
+            table = pa.Table.from_pandas(df, preserve_index=False)
+            if pq_writer is None:
+                pq_writer = pq.ParquetWriter(out_parquet, table.schema, compression="zstd")
+            pq_writer.write_table(table)
+            stream_rows += len(df)
+        else:
+            chunks.append(df)
+
     if workers <= 1:
-        chunks: List[pd.DataFrame] = []
         LOG.info("[carve] Processing %d grains sequentially...", total_grains)
-        sys.stdout.flush()  # Ensure output appears in SLURM logs immediately
+        sys.stdout.flush()
         for i, t in enumerate(tasks, 1):
             grain_id = t[0]
             LOG.info("[carve] [%d/%d] Processing grain ID: %d", i, total_grains, grain_id)
             sys.stdout.flush()
-            chunks.append(_carve_one(t))
+            _handle_carve_result(_carve_one(t))
             LOG.info("[carve] [%d/%d] ✓ Completed grain ID: %d", i, total_grains, grain_id)
-            sys.stdout.flush()  # Flush after each grain for SLURM visibility
-        df_all = pd.concat(chunks, ignore_index=True)
+            sys.stdout.flush()
     else:
         LOG.info(
             "[carve] Processing %d grains with %d workers (mp_start=%s)...",
@@ -642,47 +680,39 @@ def _carve_all(
                 "For very large files use --workers 1 or --mp-start fork on Linux."
             )
         sys.stdout.flush()
-        if use_fork_preload:
-            with ctx.Pool(processes=workers) as pool:
-                chunks = []
-                completed = 0
-                for result in pool.imap(_carve_one, tasks):
-                    completed += 1
-                    grain_id = tasks[completed - 1][0]
-                    percentage = int(100 * completed / total_grains)
-                    LOG.info(
-                        "[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
-                        completed,
-                        total_grains,
-                        percentage,
-                        grain_id,
-                    )
-                    sys.stdout.flush()
-                    chunks.append(result)
-                df_all = pd.concat(chunks, ignore_index=True)
-        else:
-            with ctx.Pool(
-                processes=workers,
-                initializer=_init_worker_frame,
-                initargs=_init_args,
-            ) as pool:
-                chunks = []
-                completed = 0
-                for result in pool.imap(_carve_one, tasks):
-                    completed += 1
-                    grain_id = tasks[completed - 1][0]
-                    percentage = int(100 * completed / total_grains)
-                    LOG.info(
-                        "[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
-                        completed,
-                        total_grains,
-                        percentage,
-                        grain_id,
-                    )
-                    sys.stdout.flush()
-                    chunks.append(result)
-                df_all = pd.concat(chunks, ignore_index=True)
+        pool_ctx = (
+            ctx.Pool(processes=workers)
+            if use_fork_preload
+            else ctx.Pool(processes=workers, initializer=_init_worker_frame, initargs=_init_args)
+        )
+        with pool_ctx as pool:
+            completed = 0
+            for result in pool.imap(_carve_one, tasks):
+                completed += 1
+                grain_id = tasks[completed - 1][0]
+                percentage = int(100 * completed / total_grains)
+                LOG.info(
+                    "[carve] [%d/%d] (%d%%) ✓ Completed grain ID: %d",
+                    completed,
+                    total_grains,
+                    percentage,
+                    grain_id,
+                )
+                sys.stdout.flush()
+                _handle_carve_result(result)
 
+    if pq_writer is not None:
+        pq_writer.close()
+
+    if out_parquet is not None:
+        if stream_rows == 0:
+            pd.DataFrame(
+                columns=["X", "Y", "Z", "HX", "HY", "HZ", "margin-ID", "grain-ID"]
+            ).to_parquet(out_parquet, index=False)
+        LOG.info("[done] streamed %d grains → %d rows @ %s", len(gids), stream_rows, out_parquet)
+        return pd.DataFrame()
+
+    df_all = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
     LOG.info("[done] merged %d grains → %d rows", len(gids), len(df_all))
     return df_all
 
@@ -716,7 +746,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional voxel grid CSV (whitespace-separated). "
-        "If provided, use VoxelCSVFrame (CSV grid + HDF5 orientations)",
+        "If provided, use VoxelCSVFrame (CSV grid + HDF5 orientations). "
+        "When set, the full CSV grid is converted unless --hx/--hy/--hz are given.",
     )
     input_group.add_argument(
         "--h5-grain-dset",
@@ -768,20 +799,23 @@ def build_parser() -> argparse.ArgumentParser:
     region_group.add_argument(
         "--hx",
         type=_parse_range,
-        required=True,
-        help="HX range in voxel space, e.g. 0:50 (inclusive)",
+        default=None,
+        help="HX range in H index space, e.g. 0:50 (inclusive). "
+        "Optional with --voxel-csv (defaults to full CSV grid).",
     )
     region_group.add_argument(
         "--hy",
         type=_parse_range,
-        required=True,
-        help="HY range in voxel space, e.g. 0:50 (inclusive)",
+        default=None,
+        help="HY range in H index space, e.g. 0:50 (inclusive). "
+        "Optional with --voxel-csv (defaults to full CSV grid).",
     )
     region_group.add_argument(
         "--hz",
         type=_parse_range,
-        required=True,
-        help="HZ range in voxel space, e.g. 0:50 (inclusive)",
+        default=None,
+        help="HZ range in H index space, e.g. 0:50 (inclusive). "
+        "Optional with --voxel-csv (defaults to full CSV grid).",
     )
 
     # Carving group
@@ -987,7 +1021,10 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
 
     if run_dir is None:
         run_dir = _mk_run_dir(ns.outdir)
-    (hx0, hx1), (hy0, hy1), (hz0, hz1) = ns.hx, ns.hy, ns.hz
+    hx_rng, hy_rng, hz_rng = _resolve_run_h_ranges(
+        ns.voxel_csv, ns.hx, ns.hy, ns.hz
+    )
+    (hx0, hx1), (hy0, hy1), (hz0, hz1) = hx_rng, hy_rng, hz_rng
 
     # Normalize lattice_constant: CLI gives dict; pipeline API may give float
     lc_raw = ns.lattice_constant
@@ -997,6 +1034,7 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
         lattice_constants = lc_raw
 
     # 1) carve (extendable)
+    raw_points_path = run_dir / "raw_points.parquet"
     df_all = _carve_all(
         dream3d=ns.dream3d,
         hx=(hx0, hx1),
@@ -1020,11 +1058,19 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
         random_orientation=getattr(ns, "random_orientation", False),
         run_dir=run_dir,
         mp_start=getattr(ns, "mp_start", "auto"),
+        out_parquet=raw_points_path,
     )
+    if len(df_all):
+        df_all.to_parquet(raw_points_path, index=False)
+        LOG.info("[done] raw points → %s (rows=%d)", raw_points_path, len(df_all))
+    else:
+        import pyarrow.parquet as pq
 
-    raw_points_path = run_dir / "raw_points.parquet"
-    df_all.to_parquet(raw_points_path, index=False)
-    LOG.info("[done] raw points → %s (rows=%d)", raw_points_path, len(df_all))
+        try:
+            n_rows = pq.read_metadata(raw_points_path).num_rows
+        except Exception:
+            n_rows = 0
+        LOG.info("[done] raw points (streamed) → %s (rows=%d)", raw_points_path, n_rows)
 
     # 2) polish (OVITO required)
     #    With effective_ratio (multi-phase): unified scan_ratio = ref_lat/ratio for all phases
@@ -1065,6 +1111,10 @@ def run_noninteractive(ns: argparse.Namespace, run_dir: Path | None = None) -> i
         atom_mass=float(ns.atom_mass),
         keep_tmp=bool(ns.keep_tmp),
         overwrite=True,
+        dream3d_path=str(Path(ns.dream3d).expanduser().resolve()),
+        voxel_csv=(
+            str(Path(ns.voxel_csv).expanduser().resolve()) if ns.voxel_csv else None
+        ),
     )
 
     paths = {
@@ -1303,14 +1353,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             LOG.info("Voronoi CSV → %s; running second pass with --voxel-csv", voronoi_csv)
             ns.voxel_csv = voronoi_csv
             ns.final_with_grain = old_final_grain
-            # Second pass uses voxel grid from CSV: set hx/hy/hz to CSV extent to avoid IndexError
-            (ns.hx, ns.hy, ns.hz) = _voxel_csv_h_ranges(voronoi_csv)
-            LOG.info(
-                "Second pass H ranges from voronoi grid: hx=%s hy=%s hz=%s",
-                ns.hx,
-                ns.hy,
-                ns.hz,
-            )
+            ns.hx = ns.hy = ns.hz = None
             return run_noninteractive(ns, run_dir=run_dir)
         return run_noninteractive(ns)
     elif ns.command == "voronoi":

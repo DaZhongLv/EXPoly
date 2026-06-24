@@ -71,6 +71,10 @@ class PolishConfig:
     # Overwrite existing outputs.
     overwrite: bool = True
 
+    # Input provenance (written as # comments in final.data / final.dump).
+    dream3d_path: Optional[str] = None
+    voxel_csv: Optional[str] = None
+
 
 # -----------------------------------------------------------------------------
 # Utils
@@ -86,16 +90,22 @@ def _ensure_parent(path: PathLike, overwrite: bool = True) -> Path:
 
 
 def _format_run_provenance(cfg: PolishConfig) -> str:
-    """Comment lines recording H-space crop and lattice-to-voxel ratio."""
+    """Comment lines recording input paths, H-space crop, and lattice-to-voxel ratio."""
+    lines: List[str] = []
+    if cfg.dream3d_path:
+        lines.append(f"# dream3d={Path(cfg.dream3d_path).expanduser().resolve()}")
+    if cfg.voxel_csv:
+        lines.append(f"# voxel_csv={Path(cfg.voxel_csv).expanduser().resolve()}")
     hx0, hx1 = cfg.hx_range
     hy0, hy1 = cfg.hy_range
     hz0, hz1 = cfg.hz_range
-    return (
+    lines.append(
         f"# EXPoly HX={int(hx0)}:{int(hx1)} "
         f"HY={int(hy0)}:{int(hy1)} "
         f"HZ={int(hz0)}:{int(hz1)} "
-        f"ratio={cfg.cube_ratio:g}\n"
+        f"ratio={cfg.cube_ratio:g}"
     )
+    return "\n".join(lines) + "\n"
 
 
 def _load_raw_points(raw_path: PathLike) -> pd.DataFrame:

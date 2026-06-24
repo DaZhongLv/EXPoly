@@ -43,13 +43,32 @@ def test_format_run_provenance():
         hy_range=(60, 200),
         hz_range=(90, 400),
         cube_ratio=1.5,
+        dream3d_path="/data/An0new6.dream3d",
+        voxel_csv="/data/crop_voxel.csv",
     )
-    line = _format_run_provenance(cfg)
-    assert line.startswith("# EXPoly ")
-    assert "HX=40:210" in line
-    assert "HY=60:200" in line
-    assert "HZ=90:400" in line
-    assert "ratio=1.5" in line
+    text = _format_run_provenance(cfg)
+    assert text.startswith("# dream3d=")
+    assert "An0new6.dream3d" in text
+    assert "# voxel_csv=" in text
+    assert "crop_voxel.csv" in text
+    assert "HX=40:210" in text
+    assert "HY=60:200" in text
+    assert "HZ=90:400" in text
+    assert "ratio=1.5" in text
+
+
+def test_format_run_provenance_without_voxel_csv():
+    cfg = PolishConfig(
+        hx_range=(0, 10),
+        hy_range=(0, 10),
+        hz_range=(0, 10),
+        cube_ratio=1.5,
+        dream3d_path="/data/toy.dream3d",
+    )
+    text = _format_run_provenance(cfg)
+    assert "# dream3d=" in text
+    assert "toy.dream3d" in text
+    assert "voxel_csv" not in text
 
 
 def test_load_raw_points(tmp_dir: Path):
