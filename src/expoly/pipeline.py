@@ -69,7 +69,7 @@ def run(
     keep_tmp : bool, default=False
         Keep temporary files
     final_with_grain : bool, default=False
-        Write additional final.dump with grain-ID
+        Write final.dump with per-atom grain-ID (final.data remains standard LAMMPS format)
     outdir : str | Path, optional
         Output directory (default: runs/expoly-<timestamp>)
     voxel_csv : str | Path, optional

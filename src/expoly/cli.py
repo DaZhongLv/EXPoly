@@ -928,7 +928,7 @@ def build_parser() -> argparse.ArgumentParser:
     output_group.add_argument(
         "--final-with-grain",
         action="store_true",
-        help="Write additional final.dump with per-atom grain-ID",
+        help="Write final.dump with per-atom grain-ID (final.data stays standard id type x y z)",
     )
     output_group.add_argument(
         "--generate-voronoi",

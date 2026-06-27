@@ -353,12 +353,12 @@ EXPoly creates a new run directory: `runs/expoly-<timestamp>/`
 
 - **`final.data`**: **Clean LAMMPS data file (recommended output)**
   - Correct atom count and box bounds
-  - Standard LAMMPS format: `Atoms # atomic` style
+  - Standard LAMMPS format: `Atoms # atomic` style (`id type x y z` only)
   - Ready for molecular dynamics simulations
   - This is the file you should use for LAMMPS
 
 - **`final.dump`** (optional): LAMMPS dump format with per-atom grain-ID
-  - Only created if `--final-with-grain` is used
+  - Only created if `--final-with-grain` is used (grain-ID is **not** written to `final.data`)
   - Useful for post-processing and analysis
   - Format: `ITEM: ATOMS id type x y z grain-ID`
 

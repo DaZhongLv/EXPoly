@@ -695,7 +695,7 @@ def polish_pipeline(
     raw_points.csv  → write tmp_polish.in.data (complete data, pre-OVITO)
                     → OVITO de-dup to ovito_psc.data (mandatory)
                     → build final.data from OVITO's Atoms block (correct N/box)
-                    → optionally append per-atom grain-ID column in final.data
+                    → if final_with_grain: also write final.dump with per-atom grain-ID
                     → optionally remove tmp files
 
     Returns the path to final.data.
@@ -730,13 +730,12 @@ def polish_pipeline(
             atom_ids_final.shape[0],
         )
 
-    # 3) Final data from OVITO output
-    grain_ids_for_data = grain_ids_final if final_with_grain else None
+    # 3) Final data from OVITO output (standard LAMMPS data: id type x y z only)
     atom_num1, box1 = build_final_data_from_ovito_atoms(
         ovito_psc,
         final_out,
         atom_mass=cfg.atom_mass,
-        grain_ids=grain_ids_for_data,
+        grain_ids=None,
         atom_ids=atom_ids_final,
         cfg=cfg,
     )
