@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from expoly.frames import Frame, find_dataset_keys, voxel_csv_h_index_ranges
+from expoly.frames import (
+    Frame,
+    detect_voxel_csv_columns,
+    find_dataset_keys,
+    read_voxel_csv_columns,
+    voxel_csv_h_index_ranges,
+)
 
 
 def test_find_dataset_keys(toy_dream3d_file, tmp_dir):
@@ -193,3 +199,18 @@ def test_voxel_csv_h_index_ranges_zero_based(tmp_dir):
         "10 5 8 2\n"
     )
     assert voxel_csv_h_index_ranges(csv_path) == ((0, 8), (0, 5), (0, 10))
+
+
+def test_detect_voxel_csv_columns_dream3d_io(tmp_dir):
+    csv_path = tmp_dir / "dream3d_crop.csv"
+    csv_path.write_text(
+        "HZ HY HX grain_id phi1 Phi phi2\n"
+        "150 70 70 329 0.1 0.2 0.3\n"
+        "151 70 70 329 0.1 0.2 0.3\n"
+    )
+    schema = detect_voxel_csv_columns(read_voxel_csv_columns(csv_path))
+    assert schema.x_col == "HX"
+    assert schema.y_col == "HY"
+    assert schema.z_col == "HZ"
+    assert schema.grain_col == "grain_id"
+    assert voxel_csv_h_index_ranges(csv_path) == ((0, 0), (0, 0), (0, 1))

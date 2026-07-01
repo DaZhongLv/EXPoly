@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import h5py as hdf
 import numpy as np
@@ -112,6 +112,61 @@ def _unit_vec(base_xyz: np.ndarray, offsets: np.ndarray) -> np.ndarray:
     return out + off
 
 
+@dataclass(frozen=True)
+class VoxelCSVSchema:
+    """Column names for a voxel CSV (supports EXPoly and dream3d_io exports)."""
+
+    x_col: str
+    y_col: str
+    z_col: str
+    grain_col: str
+
+
+_VOXEL_X_COLS = ("voxel-X", "HX", "hx")
+_VOXEL_Y_COLS = ("voxel-Y", "HY", "hy")
+_VOXEL_Z_COLS = ("voxel-Z", "HZ", "hz")
+_VOXEL_GRAIN_COLS = ("grain-ID", "grain_id", "GrainID", "GrainId")
+
+
+def read_voxel_csv_columns(csv_path: str | Path) -> list[str]:
+    csv_path = Path(csv_path)
+    header = pd.read_csv(csv_path, sep=r"\s+", comment="#", engine="python", nrows=0)
+    return list(header.columns)
+
+
+def detect_voxel_csv_columns(columns: Sequence[str]) -> VoxelCSVSchema:
+    """
+    Resolve voxel CSV column names.
+
+    Supports EXPoly exports (``voxel-X`` / ``grain-ID``) and dream3d_io crops
+    (``HX`` / ``HY`` / ``HZ`` / ``grain_id``).
+    """
+    cols = list(columns)
+
+    def _pick(candidates: Sequence[str]) -> str | None:
+        for name in candidates:
+            if name in cols:
+                return name
+        return None
+
+    x_col = _pick(_VOXEL_X_COLS)
+    y_col = _pick(_VOXEL_Y_COLS)
+    z_col = _pick(_VOXEL_Z_COLS)
+    grain_col = _pick(_VOXEL_GRAIN_COLS)
+    missing: list[str] = []
+    if x_col is None:
+        missing.append("X (voxel-X or HX)")
+    if y_col is None:
+        missing.append("Y (voxel-Y or HY)")
+    if z_col is None:
+        missing.append("Z (voxel-Z or HZ)")
+    if grain_col is None:
+        missing.append("grain (grain-ID or grain_id)")
+    if missing:
+        raise KeyError(f"Voxel CSV missing columns: {', '.join(missing)}. Found: {cols}")
+    return VoxelCSVSchema(x_col=x_col, y_col=y_col, z_col=z_col, grain_col=grain_col)
+
+
 def normalize_axis_to_indices(vals: np.ndarray) -> Tuple[np.ndarray, float, float]:
     """
     Map raw voxel coordinates to contiguous 0-based indices (step = min spacing).
@@ -134,9 +189,9 @@ def normalize_axis_to_indices(vals: np.ndarray) -> Tuple[np.ndarray, float, floa
 
 def voxel_csv_h_index_ranges(
     csv_path: str | Path,
-    x_col: str = "voxel-X",
-    y_col: str = "voxel-Y",
-    z_col: str = "voxel-Z",
+    x_col: str | None = None,
+    y_col: str | None = None,
+    z_col: str | None = None,
 ) -> Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]:
     """
     Inclusive 0-based H ranges covering the full voxel CSV grid.
@@ -145,6 +200,11 @@ def voxel_csv_h_index_ranges(
     them on the CLI when ``--voxel-csv`` is set).
     """
     csv_path = Path(csv_path)
+    if x_col is None or y_col is None or z_col is None:
+        schema = detect_voxel_csv_columns(read_voxel_csv_columns(csv_path))
+        x_col = x_col or schema.x_col
+        y_col = y_col or schema.y_col
+        z_col = z_col or schema.z_col
     df = pd.read_csv(csv_path, sep=r"\s+", comment="#", engine="python")
     for col in (x_col, y_col, z_col):
         if col not in df.columns:

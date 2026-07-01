@@ -18,7 +18,13 @@ from expoly.carve import (
     process,
     process_extend,
 )
-from expoly.frames import Frame, VoxelCSVFrame, voxel_csv_h_index_ranges
+from expoly.frames import (
+    Frame,
+    VoxelCSVFrame,
+    detect_voxel_csv_columns,
+    read_voxel_csv_columns,
+    voxel_csv_h_index_ranges,
+)
 from expoly.generate_voronoi import run as voronoi_run
 from expoly.polish import PolishConfig, polish_pipeline
 
@@ -297,23 +303,26 @@ def _build_frame_for_carve(
                 raise FileNotFoundError(
                     f"Voxel CSV file not found: {voxel_csv}. Please check the file path."
                 )
-            # Voxel-CSV + HDF5 combination
+            # Voxel-CSV + HDF5 combination (auto-detect HX/HY/HZ vs voxel-X/Y/Z)
+            csv_schema = detect_voxel_csv_columns(read_voxel_csv_columns(voxel_csv))
             sig = inspect.signature(VoxelCSVFrame)
-            if "h5_phases_dset" in sig.parameters:
-                return VoxelCSVFrame(
-                    path=str(dream3d_path),
-                    voxel_csv=str(voxel_csv),
-                    h5_grain_dset=mapping["GrainId"],
-                    mapping=mapping,
-                    h5_phases_dset=h5_phases_dset,
-                    h5_phase_name_dset=h5_phase_name_dset,
-                )
-            return VoxelCSVFrame(
+            vox_kwargs = dict(
                 path=str(dream3d_path),
                 voxel_csv=str(voxel_csv),
                 h5_grain_dset=mapping["GrainId"],
                 mapping=mapping,
+                x_col=csv_schema.x_col,
+                y_col=csv_schema.y_col,
+                z_col=csv_schema.z_col,
+                grain_col=csv_schema.grain_col,
             )
+            if "h5_phases_dset" in sig.parameters:
+                return VoxelCSVFrame(
+                    **vox_kwargs,
+                    h5_phases_dset=h5_phases_dset,
+                    h5_phase_name_dset=h5_phase_name_dset,
+                )
+            return VoxelCSVFrame(**vox_kwargs)
     except KeyError as e:
         dataset_name = str(e).strip("'\"")
         # Find which attribute/dataset failed by checking the error message
